@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>5분 채팅 · 테스트 웹</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <strong>5분 채팅</strong>
+  <span class="muted">테스트 웹 · 이 화면이 QR을 보여주는 쪽이에요</span>
+  <span class="spacer"></span>
+  <span id="me-info" class="muted small"></span>
+  <span id="conn" class="pill">연결 중…</span>
+  <button id="logout" class="ghost small-btn">로그아웃</button>
+</header>
+
+<main class="layout">
+  <section class="panel qr-panel" aria-labelledby="qr-title">
+    <div class="me-row">
+      <div>
+        <div class="muted small">이번 주 내 닉네임</div>
+        <div id="nickname" class="nickname">-</div>
+      </div>
+      <div class="coins"><span class="muted small">재화</span> <b id="coins">-</b></div>
+    </div>
+    <h2 id="qr-title" class="sr-only">내 QR</h2>
+    <div class="qr-wrap"><div id="qr" class="qr" aria-label="내 대화방 QR"></div></div>
+    <div class="qr-meta">
+      <span id="qr-clock" class="mono accent">--:--</span>
+      <div class="bar"><div id="qr-bar"></div></div>
+      <span id="qr-note" class="muted small"></span>
+    </div>
+    <div class="muted small url-line">앱 서버 주소 <code id="server-url">-</code></div>
+    <button id="reroll" class="ghost">닉네임 다시 뽑기</button>
+  </section>
+
+  <section class="panel list-panel" aria-labelledby="list-title">
+    <div class="panel-head">
+      <h2 id="list-title">대화</h2>
+      <label class="small muted"><input type="checkbox" id="show-hidden"> 숨긴 대화 보기</label>
+    </div>
+    <ul id="rooms" class="rooms"></ul>
+    <p id="rooms-empty" class="empty muted">아직 대화가 없어요. 앱으로 왼쪽 QR을 찍어 보세요.</p>
+  </section>
+
+  <section class="panel chat-panel" aria-label="대화방">
+    <div id="chat-empty" class="empty muted">대화를 선택하세요</div>
+    <div id="chat" class="chat" hidden>
+      <div class="chat-head">
+        <button id="chat-name" class="link-btn name"></button>
+        <span id="chat-clock" class="mono small"></span>
+        <span class="spacer"></span>
+        <button id="chat-memo" class="chip"></button>
+      </div>
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <div id="chat-foot" class="chat-foot"></div>
+    </div>
+  </section>
+</main>
+
+
+<section id="auth" class="auth" hidden aria-labelledby="auth-title">
+  <div class="auth-card">
+    <div class="steps small muted"><span id="step-1">1 기기 인증</span> · <span id="step-2">2 간편인증</span> · <span id="step-3">3 가입</span></div>
+
+    <form id="auth-identity" hidden>
+      <h2 id="auth-title">간편인증</h2>
+      <p class="muted small">테스트 인증이에요. 실제 서비스에서는 이 자리에 PASS·카카오 간편인증 창이 열려요.<br>같은 이름·생년월일·번호로 다시 인증하면 같은 사람으로 로그인돼요.</p>
+      <label class="label" for="f-name">이름</label>
+      <input id="f-name" class="field" autocomplete="off" maxlength="20" placeholder="홍길동">
+      <label class="label" for="f-birth">생년월일 8자리</label>
+      <input id="f-birth" class="field" inputmode="numeric" maxlength="8" placeholder="19950314">
+      <span class="label">성별</span>
+      <div class="seg" role="group" aria-label="성별">
+        <label><input type="radio" name="f-gender" value="M"> 남성</label>
+        <label><input type="radio" name="f-gender" value="F"> 여성</label>
+      </div>
+      <label class="label" for="f-phone">휴대폰 번호</label>
+      <input id="f-phone" class="field" inputmode="numeric" maxlength="11" placeholder="01012345678">
+      <button class="primary wide">인증하기</button>
+      <p id="auth-error" class="error small"></p>
+    </form>
+
+    <form id="auth-signup" hidden>
+      <h2>인증 정보 확인</h2>
+      <p class="muted small">간편인증 결과로 자동 입력됐어요. 고칠 수 없어요.</p>
+      <div class="profile"><div><span class="muted small">나이</span><b id="p-age"></b></div><div><span class="muted small">성별</span><b id="p-gender"></b></div></div>
+      <label class="check"><input type="checkbox" id="t-all"> <b>전체 동의</b></label>
+      <label class="check"><input type="checkbox" class="t" id="t-terms"> (필수) 서비스 이용약관</label>
+      <label class="check"><input type="checkbox" class="t" id="t-privacy"> (필수) 개인정보 수집·이용 (대화 내용은 신고 처리를 위해 보관돼요)</label>
+      <label class="check"><input type="checkbox" class="t" id="t-marketing"> (선택) 이벤트 알림</label>
+      <button class="primary wide">가입하고 시작하기</button>
+      <p id="signup-error" class="error small"></p>
+    </form>
+
+    <div id="auth-blocked" hidden>
+      <h2>이용이 제한된 계정이에요</h2>
+      <p class="muted" id="blocked-text"></p>
+      <button type="button" class="ghost wide" id="blocked-retry">다른 정보로 인증하기</button>
+    </div>
+  </div>
+</section>
+
+<dialog id="dlg-ext">
+  <form method="dialog" id="ext-form">
+    <h3 id="ext-title"></h3>
+    <p class="muted small" id="ext-sub"></p>
+    <button type="button" id="ext-accept" class="primary wide">수락하고 대화 이어가기</button>
+    <p class="divider small muted">거절하려면 사유를 골라주세요 (필수)</p>
+    <div id="ext-reasons" class="reasons"></div>
+    <textarea id="ext-custom" maxlength="100" placeholder="사유를 직접 입력해 주세요" hidden></textarea>
+    <p class="muted small">거절 시각은 상대에게 바로 보여요. 사유는 상대가 재화를 써야 볼 수 있어요.</p>
+    <div class="row">
+      <button value="cancel" class="ghost">나중에</button>
+      <button type="button" id="ext-reject" class="ghost danger">거절하기</button>
+    </div>
+    <p id="ext-error" class="error small"></p>
+  </form>
+</dialog>
+
+<dialog id="dlg-nick">
+  <form method="dialog">
+    <h3 id="nick-title"></h3>
+    <p class="muted small">수락하면 지금 QR은 사라지고 대화방이 열려요.</p>
+    <div class="row">
+      <button value="no" class="ghost">거절</button>
+      <button value="yes" class="primary">수락</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-detail">
+  <form method="dialog" id="detail-form">
+    <h3 id="detail-name"></h3>
+    <p class="muted small" id="detail-meta"></p>
+    <label for="detail-memo" class="label">메모 <span class="muted small">나만 볼 수 있어요 · <span id="memo-count">0</span>/100</span></label>
+    <textarea id="detail-memo" maxlength="100" placeholder="이 사람에 대해 기억하고 싶은 걸 적어두세요"></textarea>
+    <div class="row">
+      <button type="button" id="detail-hide" class="ghost"></button>
+      <button type="button" id="detail-report" class="ghost danger">신고</button>
+      <span class="spacer"></span>
+      <button value="cancel" class="ghost">닫기</button>
+      <button type="button" id="detail-save" class="primary">메모 저장</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlg-report">
+  <form method="dialog">
+    <h3>신고하기</h3>
+    <p class="muted small">관리자가 대화 내용을 확인해요. 신고한 대화는 내 목록에서 숨겨져요.</p>
+    <div id="report-reasons" class="reasons"></div>
+    <textarea id="report-detail" maxlength="300" placeholder="자세한 내용 (선택)"></textarea>
+    <div class="row"><button value="cancel" class="ghost">취소</button><button type="button" id="report-send" class="primary">신고하기</button></div>
+    <p id="report-error" class="error small"></p>
+  </form>
+</dialog>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

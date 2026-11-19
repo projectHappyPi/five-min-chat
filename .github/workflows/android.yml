@@ -1,0 +1,56 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'config/**', '.github/workflows/android.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      # 저장소에는 lib 와 AndroidManifest.xml 만 있다. 나머지 안드로이드 파일은 여기서 만든다
+      - name: Generate Android project files
+        run: flutter create --platforms=android --org com.happypi --project-name five_min_chat .
+
+      - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos --no-fatal-warnings
+      - run: flutter test
+
+      - name: Build APK (서버 주소는 config/server_url.txt)
+        run: flutter build apk --release --dart-define=SERVER_URL=$(cat ../config/server_url.txt | tr -d '[:space:]')
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: five-min-chat-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Publish APK to the "latest-apk" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-apk
+          name: 테스트용 안드로이드 APK
+          body: |
+            main 브랜치 최신 코드로 자동 빌드한 테스트용 APK예요.
+            폰에서 이 페이지를 열고 app-release.apk 를 내려받아 설치하세요.
+          prerelease: true
+          files: app/build/app/outputs/flutter-apk/app-release.apk

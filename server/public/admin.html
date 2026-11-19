@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>5분 채팅 · 관리자</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { min-height: 100vh; }
+  .shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: calc(100vh - 54px); }
+  @media (max-width: 860px) { .shell { grid-template-columns: 1fr; } nav.side { display: flex; overflow-x: auto; } }
+  nav.side { background: var(--panel); border-right: 1px solid var(--line); padding: 16px 10px; display: flex; flex-direction: column; gap: 2px; }
+  nav.side button { border: 0; text-align: left; display: flex; justify-content: space-between; align-items: center; min-height: 40px; white-space: nowrap; }
+  nav.side button[aria-current='page'] { background: var(--accent-soft); font-weight: 700; }
+  .count { font-size: 12px; background: var(--accent); color: var(--on-accent); border-radius: 10px; padding: 1px 8px; }
+  main.content { padding: 24px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  h1 { margin: 0; font-size: 22px; }
+  .lead { margin: 4px 0 0; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+  .card b { font-size: 24px; }
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-top: 1px solid var(--line); vertical-align: middle; }
+  thead th { color: var(--muted); font-weight: 500; border-top: 0; white-space: nowrap; }
+  td button { min-height: 32px; padding: 4px 10px; font-size: 13px; }
+  tr.click { cursor: pointer; }
+  tr.click:hover { background: var(--accent-soft); }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .toolbar input[type=search], .grid input, .inline input[type=text] { min-height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); padding: 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; padding: 16px; }
+  .grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 8px; background: var(--accent-soft); white-space: nowrap; }
+  .tag.red { background: var(--danger); color: #fff; }
+  .tag.gray { background: var(--line); }
+  .off { opacity: .55; }
+  .chatlog { padding: 16px; display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow: auto; }
+  .chatlog .who { font-size: 12px; color: var(--muted); }
+  .note { font-size: 13px; color: var(--muted); }
+  .inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px 16px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <strong>5분 채팅 관리자</strong>
+  <span class="muted small" id="env"></span>
+  <span class="spacer"></span>
+  <a href="/" class="small">테스트 웹 열기</a>
+</header>
+<div class="shell">
+  <nav class="side" aria-label="관리자 메뉴" id="nav"></nav>
+  <main class="content" id="view" aria-live="polite"></main>
+</div>
+
+<dialog id="dlg">
+  <form method="dialog" id="dlg-form">
+    <h3 id="dlg-title"></h3>
+    <div id="dlg-body"></div>
+    <p class="error small" id="dlg-error"></p>
+    <div class="row"><button value="cancel" class="ghost">취소</button><button type="button" class="primary" id="dlg-ok">확인</button></div>
+  </form>
+</dialog>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+const fmt = (t) => (t ? new Date(t).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) : '-');
+const day = (t) => (t ? new Date(t).toLocaleDateString('ko-KR') : '-');
+const gender = (g) => (g === 'F' ? '여' : g === 'M' ? '남' : '-');
+const STATUS = { live: '진행 중', extended: '연장됨', pending: '응답 대기', ended: '종료', rejected: '거절됨', expired: '만료' };
+const ACTIONS = {
+  view_chat: '대화 열람', blacklist_add: '블랙리스트 등록', blacklist_release: '블랙리스트 해제', blacklist_extend: '블랙리스트 연장',
+  blacklist_purge: '보관 기간 만료 폐기', coins: '재화 지급', settings: '설정 변경', reason_add: '거절 사유 추가', reason_edit: '거절 사유 수정', report: '신고 처리',
+};
+const LABELS = {
+  freeSeconds: '무료 대화 시간 (초)', qrSeconds: 'QR 유효 시간 (초)', extendWindowHours: '종료 후 연장 가능 (시간)', extendMinutes: '연장 시간 (분)',
+  extendCost: '연장 요청 재화', reasonViewCost: '거절 사유 열람 재화', rerollCost: '닉네임 다시 뽑기 재화', startCoins: '가입 시 기본 재화',
+  noResponseRefundPct: '무응답 환급 비율 (%)', responseTimeoutHours: '연장 응답 대기 (시간)', retryWaitSeconds: '재도전 대기 (초)', minAge: '가입 가능 나이 (만)',
+  blacklistDaysNormal: '블랙리스트 보관: 일반 (일)', blacklistDaysSevere: '블랙리스트 보관: 중대 (일)',
+};
+
+function h(tag, attrs = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (v === false || v == null) continue;
+    if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (k === 'class') el.className = v;
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) el.append(k.nodeType ? k : String(k));
+  return el;
+}
+const toast = (m) => { const t = $('toast'); t.textContent = m; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 2400); };
+async function api(path, method = 'GET', body) {
+  const r = await fetch('/admin/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { toast(data.error || '실패했어요'); throw new Error(data.error); }
+  return data;
+}
+function table(headers, rows) {
+  return h('div', { class: 'box' }, h('table', {}, h('thead', {}, h('tr', {}, headers.map((x) => h('th', {}, x)))), h('tbody', {}, rows)));
+}
+const empty = (text) => h('p', { class: 'muted', style: 'padding:16px' }, text);
+
+// 입력을 받는 작은 대화상자. fields: [{id, label, type, value, options}]
+function ask(title, fields, onOk, okLabel = '확인') {
+  $('dlg-title').textContent = title;
+  $('dlg-error').textContent = '';
+  $('dlg-body').replaceChildren(...fields.map((f) => {
+    let input;
+    if (f.type === 'select') input = h('select', { id: 'f-' + f.id, class: 'field' }, f.options.map(([v, t]) => h('option', { value: v, selected: v === f.value }, t)));
+    else if (f.type === 'textarea') input = h('textarea', { id: 'f-' + f.id }, f.value || '');
+    else if (f.type === 'info') return h('p', { class: 'note' }, f.label);
+    else input = h('input', { id: 'f-' + f.id, class: 'field', type: f.type || 'text', value: f.value ?? '' });
+    return h('label', { class: 'label', style: 'display:flex;flex-direction:column;gap:4px;margin-bottom:8px' }, f.label, input);
+  }));
+  $('dlg-ok').textContent = okLabel;
+  $('dlg-ok').onclick = async () => {
+    const v = {};
+    for (const f of fields) if (f.type !== 'info') v[f.id] = $('f-' + f.id).value;
+    try { await onOk(v); $('dlg').close(); } catch (e) { $('dlg-error').textContent = e.message || '실패했어요'; }
+  };
+  $('dlg').showModal();
+}
+
+// ---------------------------------------------------------------- 화면들
+
+const pages = {
+  async dashboard() {
+    const o = await api('/overview');
+    $('env').textContent = `서버 ${o.publicUrl} · 저장소 ${o.store === 'postgres' ? 'PostgreSQL' : '파일'} · 인증 ${o.identity === 'mock' ? '테스트 인증' : o.identity}`;
+    const c = (label, v, sub) => h('div', { class: 'card' }, h('span', { class: 'muted small' }, label), h('b', {}, v), sub ? h('span', { class: 'muted small' }, sub) : null);
+    return [
+      h('div', {}, h('h1', {}, '대시보드'), h('p', { class: 'muted lead' }, '최근 24시간 기준이에요.')),
+      h('div', { class: 'cards' },
+        c('전체 회원', o.users, `오늘 가입 ${o.newUsersToday}`),
+        c('진행 중 대화', o.liveRooms, `오늘 연결 ${o.roomsToday}`),
+        c('오늘 메시지', o.todayMessages),
+        c('처리 안 된 신고', o.openReports),
+        c('블랙리스트', o.activeBlacklist)),
+    ];
+  },
+
+  async users(q = '') {
+    const { users } = await api('/users?q=' + encodeURIComponent(q));
+    const search = h('input', { type: 'search', placeholder: '닉네임·이름 검색', value: q, 'aria-label': '회원 검색' });
+    search.addEventListener('keydown', (e) => e.key === 'Enter' && show('users', search.value));
+    return [
+      h('div', {}, h('h1', {}, '회원'), h('p', { class: 'muted lead' }, '나이와 성별은 간편인증 결과로 자동 입력돼요. 이름은 가려서 보여줘요.')),
+      h('div', { class: 'toolbar' }, search, h('button', { onclick: () => show('users', search.value) }, '검색')),
+      users.length ? table(['닉네임', '이름', '성별', '나이', '재화', '기기', '가입', '최근 접속', '신고', '상태', ''],
+        users.map((u) => h('tr', {},
+          h('td', {}, u.nickname), h('td', {}, u.nameMasked || '-'), h('td', {}, gender(u.gender)), h('td', {}, `만 ${u.age} (${u.birthYear})`),
+          h('td', {}, u.coins), h('td', { class: 'small' }, u.device || '-'), h('td', {}, day(u.createdAt)), h('td', {}, fmt(u.lastSeenAt)),
+          h('td', {}, u.reports ? h('span', { class: 'tag' }, u.reports) : '-'),
+          h('td', {}, u.blocked ? h('span', { class: 'tag red' }, `차단 ~${day(u.blocked.until)}`) : '정상'),
+          h('td', {},
+            h('button', { onclick: () => show('rooms', u.id) }, '대화'), ' ',
+            h('button', { onclick: () => coins(u) }, '재화'), ' ',
+            u.blocked ? null : h('button', { class: 'ghost danger', onclick: () => blockUser(u) }, '차단'))))) : empty('회원이 없어요'),
+    ];
+  },
+
+  async rooms(q = '', reported = false) {
+    const { rooms } = await api(`/rooms?q=${encodeURIComponent(q)}${reported ? '&reported=1' : ''}`);
+    const search = h('input', { type: 'search', placeholder: '닉네임 또는 회원 ID', value: q, 'aria-label': '대화 검색' });
+    const only = h('input', { type: 'checkbox', checked: reported });
+    search.addEventListener('keydown', (e) => e.key === 'Enter' && show('rooms', search.value, only.checked));
+    only.addEventListener('change', () => show('rooms', search.value, only.checked));
+    return [
+      h('div', {}, h('h1', {}, '대화 조회'), h('p', { class: 'muted lead' }, '대화방을 열면 누가 언제 열람했는지 접근 기록에 남아요. 신고 확인 등 필요한 경우에만 열어 주세요.')),
+      h('div', { class: 'toolbar' }, search, h('button', { onclick: () => show('rooms', search.value, only.checked) }, '검색'), h('label', { class: 'small' }, only, ' 신고된 대화만')),
+      rooms.length ? table(['참여자', '연결', '시작', '마지막 메시지', '메시지', '상태', '신고'],
+        rooms.map((r) => h('tr', { class: 'click', onclick: () => openRoom(r.id) },
+          h('td', {}, `${r.a.nickname} · ${r.b.nickname}`), h('td', {}, r.via === 'qr' ? 'QR' : '닉네임'), h('td', {}, fmt(r.createdAt)),
+          h('td', {}, fmt(r.lastAt)), h('td', {}, r.messageCount), h('td', {}, STATUS[r.status] || r.status),
+          h('td', {}, r.reports ? h('span', { class: 'tag red' }, r.reports) : '-')))) : empty('대화가 없어요'),
+    ];
+  },
+
+  async reports() {
+    const { reports } = await api('/reports');
+    return [
+      h('div', {}, h('h1', {}, '신고'), h('p', { class: 'muted lead' }, '대화 내용을 확인하고, 필요하면 신고된 사람을 블랙리스트에 올려요.')),
+      reports.length ? table(['접수', '사유', '내용', '신고자', '대상', '상태', ''],
+        reports.map((r) => h('tr', { class: r.status === 'done' ? 'off' : '' },
+          h('td', {}, fmt(r.createdAt)), h('td', {}, r.reason), h('td', { class: 'small' }, r.detail || '-'), h('td', {}, r.reporter),
+          h('td', {}, r.target, r.targetBlocked ? h('span', { class: 'tag red', style: 'margin-left:6px' }, '차단됨') : null),
+          h('td', {}, r.status === 'done' ? `처리 ${r.note ? '· ' + r.note : ''}` : h('span', { class: 'tag' }, '대기')),
+          h('td', {},
+            h('button', { onclick: () => openRoom(r.roomId, '신고 확인') }, '대화 보기'), ' ',
+            r.targetBlocked ? null : h('button', { class: 'ghost danger', onclick: () => blockUser({ id: r.targetId, nickname: r.target }, r.id) }, '차단'), ' ',
+            r.status === 'open' ? h('button', { onclick: () => ask('신고 처리 완료', [{ id: 'note', label: '처리 메모', type: 'textarea' }], async (v) => { await api(`/reports/${r.id}`, 'PUT', { status: 'done', note: v.note }); show('reports'); }) }, '처리 완료') : null)))) : empty('신고가 없어요'),
+    ];
+  },
+
+  async blacklist() {
+    const { blacklist } = await api('/blacklist');
+    return [
+      h('div', {}, h('h1', {}, '블랙리스트'), h('p', { class: 'muted lead' }, '차단하면 그 사람의 CI로 가입과 로그인이 막혀요. 보관 기간이 지나거나 해제하면 CI는 자동으로 폐기돼요. 회원 화면이나 신고 화면에서 등록해요.')),
+      blacklist.length ? table(['닉네임', '성별·출생', '등급', '사유', '등록', '만료', '상태', ''],
+        blacklist.map((b) => h('tr', { class: b.active ? '' : 'off' },
+          h('td', {}, b.nickname), h('td', {}, `${gender(b.gender)} · ${b.birthYear}`), h('td', {}, b.grade === 'severe' ? '중대' : '일반'),
+          h('td', { class: 'small' }, b.reason), h('td', {}, day(b.createdAt)), h('td', {}, day(b.expiresAt)),
+          h('td', {}, b.active ? h('span', { class: 'tag red' }, `차단 중 · ${Math.ceil((b.expiresAt - Date.now()) / 86400e3)}일 남음`) : b.releasedAt ? `해제 (${b.releaseReason})` : '만료'),
+          h('td', {}, b.active ? [
+            h('button', { onclick: () => ask('보관 기간 연장', [{ id: 'days', label: '연장할 일수', type: 'number', value: 30 }], async (v) => { await api(`/blacklist/${b.id}/extend`, 'POST', { days: Number(v.days) }); show('blacklist'); }) }, '연장'), ' ',
+            h('button', { onclick: () => ask(`${b.nickname} 차단 해제`, [{ id: 'reason', label: '해제 사유 (필수, 기록에 남아요)', type: 'textarea' }], async (v) => { await api(`/blacklist/${b.id}/release`, 'POST', { reason: v.reason }); toast('해제했어요'); show('blacklist'); }) }, '해제'),
+          ] : null)))) : empty('차단된 사람이 없어요'),
+    ];
+  },
+
+  async settings() {
+    const { settings, reasons } = await api('/settings');
+    const form = h('div', { class: 'grid' }, Object.entries(LABELS).map(([k, label]) => h('label', {}, label, h('input', { type: 'number', min: 0, step: 'any', name: k, value: settings[k] }))));
+    const save = async () => {
+      const body = {};
+      for (const i of form.querySelectorAll('input')) body[i.name] = Number(i.value);
+      await api('/settings', 'PUT', body);
+      toast('설정을 저장했어요');
+    };
+    const upd = async (id, body) => { await api('/reasons/' + id, 'PUT', body); show('settings'); };
+    const newText = h('input', { type: 'text', placeholder: '새 거절 사유 문구', maxlength: 60, style: 'flex:1;min-width:220px', 'aria-label': '새 거절 사유 문구' });
+    const newRetry = h('input', { type: 'checkbox' });
+    return [
+      h('div', {}, h('h1', {}, '운영 설정'), h('p', { class: 'muted lead' }, '테스트할 때는 무료 대화 시간과 재도전 대기를 30초 정도로 줄이면 편해요. 저장 즉시 적용돼요.')),
+      h('div', { class: 'box' }, form, h('div', { class: 'inline' }, h('span', { class: 'spacer' }), h('button', { class: 'primary', onclick: save }, '설정 저장'))),
+      h('h2', {}, '거절 사유'),
+      h('p', { class: 'muted small' }, '재도전 허용 사유로 거절되면 요청자는 대기 시간 뒤 한 번 더 요청할 수 있어요. 사유는 삭제 대신 비활성화만 돼요.'),
+      table(['순서', '사유 문구', '재도전', '직접 입력', '상태', ''],
+        reasons.map((r) => h('tr', { class: r.active ? '' : 'off' },
+          h('td', {}, h('button', { onclick: () => upd(r.id, { move: 'up' }) }, '↑'), ' ', h('button', { onclick: () => upd(r.id, { move: 'down' }) }, '↓')),
+          h('td', {}, r.text),
+          h('td', {}, h('button', { onclick: () => upd(r.id, { retry: !r.retry }) }, r.retry ? '허용' : '불가')),
+          h('td', {}, r.custom ? '예' : '-'),
+          h('td', {}, h('span', { class: 'tag' }, r.active ? '사용 중' : '비활성')),
+          h('td', {}, h('button', { onclick: () => ask('사유 문구 수정', [{ id: 'text', label: '사유 문구', value: r.text }], (v) => upd(r.id, { text: v.text })) }, '수정'), ' ',
+            h('button', { onclick: () => upd(r.id, { active: !r.active }) }, r.active ? '비활성화' : '다시 사용'))))),
+      h('div', { class: 'box' }, h('div', { class: 'inline' }, newText, h('label', { class: 'small' }, newRetry, ' 재도전 허용'),
+        h('button', { class: 'primary', onclick: async () => { await api('/reasons', 'POST', { text: newText.value, retry: newRetry.checked }); toast('사유를 추가했어요'); show('settings'); } }, '사유 추가'))),
+    ];
+  },
+
+  async logs() {
+    const { logs } = await api('/logs');
+    return [
+      h('div', {}, h('h1', {}, '접근 기록'), h('p', { class: 'muted lead' }, '대화 열람, 차단, 설정 변경처럼 관리자가 한 일은 모두 여기에 남아요.')),
+      logs.length ? table(['시각', '누가', '한 일', '대상', '내용'],
+        logs.map((l) => h('tr', {}, h('td', {}, fmt(l.at)), h('td', {}, l.admin), h('td', {}, ACTIONS[l.action] || l.action), h('td', { class: 'small' }, l.target || '-'),
+          h('td', { class: 'small' }, l.detail ? Object.entries(l.detail).filter(([, v]) => v != null).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ') : '-')))) : empty('기록이 없어요'),
+    ];
+  },
+};
+
+// 대화 내용 보기
+async function openRoom(id, reason = '') {
+  const d = await api(`/rooms/${id}?reason=${encodeURIComponent(reason)}`);
+  const r = d.room;
+  render([
+    h('div', {}, h('button', { onclick: () => history.back() }, '← 목록'),
+      h('h1', { style: 'margin-top:12px' }, `${r.a.nickname} · ${r.b.nickname}`),
+      h('p', { class: 'muted lead' }, `${fmt(r.createdAt)} ${r.via === 'qr' ? 'QR' : '닉네임'}로 연결 · ${STATUS[r.status] || r.status} · 메시지 ${r.messageCount}개 · 이 열람은 접근 기록에 남았어요`)),
+    d.reports.length ? h('div', { class: 'box' }, h('div', { class: 'inline' }, h('b', {}, '신고'), d.reports.map((x) => h('span', { class: 'tag red' }, `${x.reason}${x.detail ? ': ' + x.detail : ''}`)))) : null,
+    h('div', { class: 'box' }, h('div', { class: 'chatlog' },
+      d.messages.length ? d.messages.map((m) => m.system
+        ? h('div', { class: 'msg system' }, `${m.text} · ${fmt(m.at)}`)
+        : h('div', { class: `msg ${m.fromId === r.a.id ? 'theirs' : 'mine'}` }, h('div', { class: 'who' }, `${m.from} · ${fmt(m.at)}`), m.text))
+      : empty('메시지가 없어요'))),
+    h('div', { class: 'toolbar' },
+      h('button', { class: 'ghost danger', onclick: () => blockUser(r.a) }, `${r.a.nickname} 차단`),
+      h('button', { class: 'ghost danger', onclick: () => blockUser(r.b) }, `${r.b.nickname} 차단`)),
+  ], false);
+  history.pushState({ page: 'room', id }, '');
+}
+
+function blockUser(u, reportId) {
+  ask(`${u.nickname} 블랙리스트 등록`, [
+    { type: 'info', label: '등록하면 바로 로그아웃되고, 같은 사람(CI)은 다른 기기로도 가입·로그인할 수 없어요.' },
+    { id: 'grade', label: '등급', type: 'select', value: 'normal', options: [['normal', '일반 (기본 1년)'], ['severe', '중대 (기본 3년)']] },
+    { id: 'days', label: '보관 일수 (비우면 등급 기본값)', type: 'number', value: '' },
+    { id: 'reason', label: '차단 사유 (필수)', type: 'textarea' },
+  ], async (v) => {
+    await api('/blacklist', 'POST', { userId: u.id, grade: v.grade, days: Number(v.days) || undefined, reason: v.reason, reportId });
+    toast('블랙리스트에 등록했어요');
+  }, '차단하기');
+}
+
+function coins(u) {
+  ask(`${u.nickname} 재화 지급`, [{ id: 'delta', label: '지급할 재화 (빼려면 음수)', type: 'number', value: 50 }], async (v) => {
+    await api(`/users/${u.id}/coins`, 'POST', { delta: Number(v.delta) });
+    toast('반영했어요');
+    show('users');
+  });
+}
+
+// ---------------------------------------------------------------- 메뉴
+
+const MENU = [['dashboard', '대시보드'], ['users', '회원'], ['rooms', '대화 조회'], ['reports', '신고'], ['blacklist', '블랙리스트'], ['settings', '설정·거절 사유'], ['logs', '접근 기록']];
+let current = 'dashboard';
+
+function render(nodes) {
+  $('view').replaceChildren(...nodes.filter(Boolean));
+  window.scrollTo(0, 0);
+}
+
+async function show(page, ...args) {
+  current = page;
+  drawNav();
+  render(await pages[page](...args));
+  if (!args.length) history.replaceState({ page }, '', '#' + page);
+}
+
+async function drawNav() {
+  let open = 0;
+  try { open = (await (await fetch('/admin/api/overview')).json()).openReports; } catch (_) {}
+  $('nav').replaceChildren(...MENU.map(([k, label]) => h('button', { 'aria-current': current === k ? 'page' : null, onclick: () => show(k) },
+    label, k === 'reports' && open ? h('span', { class: 'count' }, open) : null)));
+}
+
+window.addEventListener('hashchange', () => { const p = location.hash.slice(1); if (p in pages && p !== current) show(p); });
+window.addEventListener('popstate', (e) => show((e.state && e.state.page !== 'room' && e.state.page) || current));
+show(location.hash.slice(1) in pages ? location.hash.slice(1) : 'dashboard');
+pages.dashboard();
+</script>
+</body>
+</html>
