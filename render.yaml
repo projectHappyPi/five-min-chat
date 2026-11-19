@@ -20,6 +20,6 @@ services:
         generateValue: true
       - key: APP_SECRET
         generateValue: true
-      # Neon 에서 복사한 연결 주소를 블루프린트 만들 때 직접 넣는다
+      # Supabase 의 Session pooler 연결 주소를 블루프린트 만들 때 직접 넣는다
       - key: DATABASE_URL
         sync: false

@@ -332,7 +332,15 @@ async function start(opts = {}) {
     return id ? db.users[id] : null;
   }
 
-  app.get('/health', (req, res) => res.json({ ok: true, publicUrl: PUBLIC_URL, store: store.kind, identity: identity.name }));
+  app.get('/health', async (req, res) => {
+    let dbOk = true;
+    try {
+      await store.ping();
+    } catch (e) {
+      dbOk = false;
+    }
+    res.status(dbOk ? 200 : 503).json({ ok: dbOk, publicUrl: PUBLIC_URL, store: store.kind, identity: identity.name });
+  });
 
   // 1단계: 기기 인증. 앱을 처음 켤 때 이 기기 전용 비밀 토큰을 받아 보안 저장소에 둔다.
   app.post('/api/device/register', (req, res) => {

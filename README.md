@@ -15,14 +15,16 @@
 | 역할 | 서비스 | 무료 조건 |
 | --- | --- | --- |
 | 서버 | Render 무료 웹 서비스 (싱가포르) | 15분 동안 요청이 없으면 잠들고, 깨울 때 30초~1분. keepalive 워크플로가 14분마다 깨움 |
-| 데이터베이스 | Neon PostgreSQL | 0.5GB, 쉬다가 첫 요청 때 1초 안에 깨어남 |
+| 데이터베이스 | Supabase PostgreSQL (서울 리전) | 0.5GB. 7일 동안 사용이 없으면 일시정지되는데, keepalive 가 서버를 깨울 때 DB도 함께 건드려 막는다 |
 | 소스·APK 빌드·배포 | GitHub Actions, Releases | 공개 저장소 무료 |
 
 ## 처음 배포하기
 
-1. **Neon**: neon.tech 에서 GitHub 계정으로 가입 → 프로젝트 만들기 (지역은 Singapore 추천) → 대시보드의 **Connection string** 복사 (`postgresql://`로 시작)
+1. **Supabase**: supabase.com 에서 GitHub 계정으로 가입 → New project (Region: Northeast Asia (Seoul)) → DB 비밀번호 정하기
+   → 위쪽 **Connect** → **Session pooler** 연결 주소 복사 (`postgresql://postgres.xxxx:[비밀번호]@aws-...pooler.supabase.com:5432/postgres`), `[YOUR-PASSWORD]` 자리에 DB 비밀번호 넣기
+   (Direct connection 주소는 IPv6 전용이라 Render 무료 서버에서 연결되지 않는다)
 2. **Render**: render.com 에서 GitHub 계정으로 가입 → **New → Blueprint** → 이 저장소 선택
-   - `DATABASE_URL` 입력칸에 1번에서 복사한 주소를 붙여넣고 **Apply**
+   - `DATABASE_URL` 입력칸에 1번에서 만든 주소를 붙여넣고 **Apply**
    - 몇 분 뒤 서비스 주소가 나온다 (예: `https://five-min-chat.onrender.com`)
    - 관리자 비밀번호: Render 의 서비스 화면 → **Environment** → `ADMIN_PASSWORD` 값
 3. 서비스 주소가 `https://five-min-chat.onrender.com` 이 아니면 `config/server_url.txt` 를 그 주소로 고친다
@@ -90,3 +92,9 @@ PC 에서만 서버를 띄워 테스트할 때는 `server\start-server.bat` 을 
 - 사용자끼리 차단, 문의함, 푸시 알림
 - iOS 빌드 (Mac 또는 클라우드 빌드 필요)
 - 서버는 한 대 기준 (데이터를 메모리에 올려 쓰는 구조). 사용자가 많아지면 구조 변경 필요
+
+## 왜 Vercel 이 아니라 Render 인가
+
+이 서버는 Socket.io 로 앱과 연결을 계속 유지하고, 1초마다 대화 타이머를 확인한다.
+Vercel 은 요청이 올 때만 잠깐 실행되는 서버리스 방식이라 이런 상시 연결 서버를 올릴 수 없다.
+Vercel 로 가려면 실시간 채팅을 Supabase Realtime 으로, 타이머·연장 로직을 DB 함수와 예약 작업으로 옮기는 재설계가 필요하다.

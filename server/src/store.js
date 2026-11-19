@@ -70,6 +70,12 @@ class PgStore {
     return db;
   }
 
+  // 무료 DB가 오래 쉬면 일시정지되므로, 서버 깨우기 요청 때 DB도 한 번 건드린다
+  async ping() {
+    await this.pool.query('select 1');
+    return true;
+  }
+
   put(kind, obj) {
     this.dirty.set(`${kind}\u0000${obj.id}`, { kind, obj });
   }
@@ -158,6 +164,10 @@ class FileStore {
     clearTimeout(this.timer);
     const out = { ...this.db, adminLogs: this.logList.slice(-2000) };
     fs.writeFileSync(this.file, JSON.stringify(out, (k, v) => (k === '_last' ? undefined : v)));
+  }
+
+  async ping() {
+    return true;
   }
 
   put() {
