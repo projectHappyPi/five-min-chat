@@ -101,8 +101,8 @@ class _RootState extends State<Root> {
   Future<void> _onEvent(AppEvent e) async {
     final state = AppScope.read(context);
     switch (e) {
-      case QrUsedEvent(:final roomId):
-        toast('상대가 QR을 찍었어요. 대화방이 열렸어요');
+      case QrUsedEvent(:final roomId, :final reused):
+        toast(reused ? '이미 대화한 상대예요. 기존 대화방을 열었어요' : '상대가 QR을 찍었어요. 대화방이 열렸어요');
         openChat(roomId);
       case ExtIncomingEvent(:final roomId, :final fromNickname):
         toast('$fromNickname님이 대화를 더 하고 싶어해요');
@@ -151,6 +151,7 @@ class _RootState extends State<Root> {
     state.pendingJoin = null;
     try {
       final room = await state.joinFromCode(code);
+      if (state.lastJoinReused) toast('이미 대화한 상대예요. 기존 대화방을 열었어요');
       openChat(room.id);
     } catch (e) {
       toast(e.toString());

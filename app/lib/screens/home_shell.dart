@@ -21,7 +21,7 @@ class _HomeShellState extends State<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final state = AppScope.of(context);
-    final live = state.rooms.values.where((r) => r.isLive && !r.hidden).length;
+    final unread = state.totalUnread;
     return Scaffold(
       body: SafeArea(
         child: switch (_tab) {
@@ -38,7 +38,7 @@ class _HomeShellState extends State<HomeShell> {
           const NavigationDestination(icon: Icon(Icons.qr_code_2), label: '내 QR'),
           const NavigationDestination(icon: Icon(Icons.qr_code_scanner), label: '스캔'),
           NavigationDestination(
-            icon: Badge(isLabelVisible: live > 0, label: Text('$live'), child: const Icon(Icons.chat_bubble_outline)),
+            icon: Badge(isLabelVisible: unread > 0, label: Text(unread > 99 ? '99+' : '$unread'), child: const Icon(Icons.chat_bubble_outline)),
             label: '대화',
           ),
         ],
@@ -252,6 +252,7 @@ class ScanTab extends StatelessWidget {
             child: ScannerView(onCode: (code) async {
               try {
                 final room = await state.joinFromCode(code);
+                if (state.lastJoinReused) toast('이미 대화한 상대예요. 기존 대화방을 열었어요');
                 openChat(room.id);
               } catch (e) {
                 toast(e.toString());
@@ -385,7 +386,28 @@ class _RoomTile extends StatelessWidget {
       ),
       title: Text(room.partnerNickname, style: TextStyle(fontWeight: FontWeight.w600, color: p.text)),
       subtitle: Text(_preview, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: p.muted)),
-      trailing: badge,
+      // 카카오톡처럼 안 읽은 메시지 수를 빨간 동그라미로
+      trailing: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          badge,
+          if (room.unread > 0) ...[
+            const SizedBox(height: 6),
+            Container(
+              constraints: const BoxConstraints(minWidth: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(color: const Color(0xFFE5484D), borderRadius: BorderRadius.circular(10)),
+              child: Text(
+                room.unread > 99 ? '99+' : '${room.unread}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ],
+      ),
       onTap: () => openChat(room.id),
     );
   }

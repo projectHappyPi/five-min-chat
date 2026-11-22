@@ -85,6 +85,7 @@ class Room {
         memo = m['memo'] as String? ?? '',
         hidden = m['hidden'] == true,
         reported = m['reported'] == true,
+        unread = _int(m['unread']),
         status = m['status'] as String,
         endsAt = _intOrNull(m['endsAt']),
         windowEnd = _intOrNull(m['windowEnd']),
@@ -99,6 +100,7 @@ class Room {
   final String memo;
   final bool hidden;
   final bool reported;
+  final int unread; // 안 읽은 상대 메시지 수
   final String status; // live, extended, pending, ended, rejected, expired
   final int? endsAt;
   final int? windowEnd;
@@ -145,8 +147,9 @@ class QrInfo {
 sealed class AppEvent {}
 
 class QrUsedEvent extends AppEvent {
-  QrUsedEvent(this.roomId);
+  QrUsedEvent(this.roomId, {this.reused = false});
   final String roomId;
+  final bool reused; // 같은 사람이 다시 찍어서 기존 대화방이 열린 경우
 }
 
 class ExtIncomingEvent extends AppEvent {
@@ -188,6 +191,10 @@ class AppState extends ChangeNotifier {
   String? _verificationId;
   Map<String, dynamic>? blockedInfo;
   String? pendingJoin; // 로그인 전에 찍은 QR: 로그인 뒤 바로 들어간다
+  String? openRoomId; // 지금 화면에 열려 있는 대화방
+  bool lastJoinReused = false;
+
+  int get totalUnread => rooms.values.where((r) => !r.hidden && r.status != 'expired').fold(0, (sum, r) => sum + r.unread);
   Me? me;
   Map<String, num> settings = {};
   List<Reason> reasons = [];
@@ -424,10 +431,13 @@ class AppState extends ChangeNotifier {
       final msg = Msg.fromJson(_map(m['message']));
       final list = messages[roomId];
       if (list != null && !list.any((x) => x.id == msg.id)) list.add(msg);
+      // 지금 보고 있는 대화방이면 바로 읽음 처리
+      if (roomId == openRoomId && !msg.mine) unawaited(call('room:read', {'roomId': roomId}).then((_) {}, onError: (_) {}));
       notifyListeners();
     });
     s.on('qr:used', (d) {
-      _events.add(QrUsedEvent(_map(d)['roomId'] as String));
+      final m = _map(d);
+      _events.add(QrUsedEvent(m['roomId'] as String, reused: m['reused'] == true));
       unawaited(newQr().catchError((_) {}));
     });
     s.on('ext:incoming', (d) {
@@ -536,6 +546,7 @@ class AppState extends ChangeNotifier {
     await waitReady();
     final m = await call('join', {'token': token});
     final room = Room.fromJson(_map(m['room']));
+    lastJoinReused = m['reused'] == true;
     rooms[room.id] = room;
     notifyListeners();
     return room;

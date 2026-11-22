@@ -176,8 +176,8 @@ function start(token) {
   });
   socket.on('connect', onConnect);
   socket.on('me:update', (u) => setMe(u));
-  socket.on('qr:used', ({ roomId }) => {
-    toast('상대가 QR을 찍었어요. 대화방이 열렸어요');
+  socket.on('qr:used', ({ roomId, reused }) => {
+    toast(reused ? '이미 대화한 상대예요. 기존 대화방을 열었어요' : '상대가 QR을 찍었어요. 대화방이 열렸어요');
     newQr();
     openRoom(roomId);
   });
@@ -190,6 +190,8 @@ function start(token) {
   socket.on('msg', ({ roomId, message }) => {
     const list = state.messages.get(roomId);
     if (list && !list.find((m) => m.id === message.id)) list.push(message);
+    // 보고 있는 대화방이면 바로 읽음 처리
+    if (state.current === roomId && !message.mine && !document.hidden) socket.call('room:read', { roomId });
     if (state.current === roomId) renderMessages();
   });
   socket.on('ext:incoming', ({ roomId, fromNickname }) => {
@@ -301,7 +303,7 @@ function renderRooms() {
         h('button', { 'aria-current': String(state.current === r.id), onclick: () => openRoom(r.id) },
           h('span', { class: 'avatar' }, r.partnerNickname[0]),
           h('span', { class: 'room-main' }, h('b', {}, r.partnerNickname), h('span', {}, preview(r))),
-          badge(r)))));
+          h('span', { class: 'room-side' }, badge(r), r.unread > 0 ? h('span', { class: 'unread' }, r.unread > 99 ? '99+' : r.unread) : null)))));
   $('rooms-empty').hidden = list.length > 0;
 }
 $('show-hidden').addEventListener('change', renderRooms);

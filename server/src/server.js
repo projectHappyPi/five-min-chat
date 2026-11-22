@@ -238,6 +238,7 @@ async function start(opts = {}) {
       windowEnd: st.windowEnd || null,
       ext: extInfo,
       lastMessage: last ? { text: last.text, at: last.at, mine: last.from === uid } : null,
+      unread: msgs.filter((m) => !m.system && m.from !== uid && m.at > ((room.readAt && room.readAt[uid]) || 0)).length,
       serverNow: now(),
     };
   }
@@ -262,6 +263,32 @@ async function start(opts = {}) {
     return m;
   }
 
+  // 두 사람 사이에 아직 끝나지 않은 대화방 (만료 전이면 종료·거절 상태도 포함)
+  function openRoomBetween(x, y) {
+    return Object.values(db.rooms).find((r) => ((r.a === x && r.b === y) || (r.a === y && r.b === x)) && roomState(r).status !== 'expired') || null;
+  }
+
+  // 둘 중 한 명이라도 상대를 신고한 적이 있으면 다시 연결하지 않는다
+  function pairReported(x, y) {
+    return Object.values(db.rooms).some(
+      (r) => ((r.a === x && r.b === y) || (r.a === y && r.b === x)) && r.reportedBy && Object.keys(r.reportedBy).length > 0,
+    );
+  }
+
+  /** 같은 사람과 다시 연결하면 새 방 대신 기존 대화방을 연다 */
+  function connectPair(ownerId, guestId, via) {
+    const existing = openRoomBetween(ownerId, guestId);
+    if (existing) {
+      existing.hidden[ownerId] = false;
+      existing.hidden[guestId] = false;
+      saveRoom(existing);
+      addMessage(existing, null, via === 'qr' ? 'QR로 다시 연결됐어요' : '닉네임으로 다시 연결됐어요', true);
+      pushRoom(existing);
+      return { room: existing, reused: true };
+    }
+    return { room: createRoom(ownerId, guestId, via), reused: false };
+  }
+
   function createRoom(ownerId, guestId, via) {
     const owner = ensureNickname(db.users[ownerId]);
     const guest = ensureNickname(db.users[guestId]);
@@ -281,6 +308,7 @@ async function start(opts = {}) {
       memos: {},
       hidden: {},
       reportedBy: {},
+      readAt: {},
     };
     db.rooms[room.id] = room;
     db.messages[room.id] = [];
@@ -777,6 +805,7 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
     request_gone: '연결 요청이 만료됐어요',
     retry_wait: '아직 다시 요청할 수 없어요',
     partner_blocked: '상대가 이용 제한 중이라 연결할 수 없어요',
+    reported_pair: '신고한 적이 있는 상대와는 다시 연결할 수 없어요',
     report_reason: '신고 사유를 골라 주세요',
     already_reported: '이미 신고한 대화예요',
   };
@@ -823,10 +852,11 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
       }
       if (q.userId === uid) return fail(ack, 'self');
       if (activeBlock(db.users[q.userId].ciHash)) return fail(ack, 'partner_blocked');
+      if (pairReported(q.userId, uid)) return fail(ack, 'reported_pair');
       qrTokens.delete(token); // 1회용
-      const room = createRoom(q.userId, uid, 'qr');
-      io.to(`u:${q.userId}`).emit('qr:used', { roomId: room.id });
-      ok(ack, { room: summary(room, uid) });
+      const { room, reused } = connectPair(q.userId, uid, 'qr');
+      io.to(`u:${q.userId}`).emit('qr:used', { roomId: room.id, reused });
+      ok(ack, { room: summary(room, uid), reused });
     });
 
     socket.on('nick:connect', ({ nickname } = {}, ack) => {
@@ -834,6 +864,7 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
       if (!target) return fail(ack, 'nick_not_found');
       if (target.id === uid) return fail(ack, 'self');
       if (!activeQrOf(target.id)) return fail(ack, 'nick_not_waiting');
+      if (pairReported(target.id, uid)) return fail(ack, 'reported_pair');
       const reqId = newId(6);
       nickRequests.set(reqId, { from: uid, to: target.id, expiresAt: now() + 60e3 });
       io.to(`u:${target.id}`).emit('nick:request', { reqId, fromNickname: ensureNickname(me()).nickname });
@@ -849,10 +880,10 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
         return ok(ack);
       }
       consumeQrOf(uid);
-      const room = createRoom(uid, r.from, 'nickname');
-      io.to(`u:${r.from}`).emit('nick:result', { accepted: true, roomId: room.id });
-      io.to(`u:${uid}`).emit('qr:used', { roomId: room.id });
-      ok(ack, { room: summary(room, uid) });
+      const { room, reused } = connectPair(uid, r.from, 'nickname');
+      io.to(`u:${r.from}`).emit('nick:result', { accepted: true, roomId: room.id, reused });
+      io.to(`u:${uid}`).emit('qr:used', { roomId: room.id, reused });
+      ok(ack, { room: summary(room, uid), reused });
     });
 
     socket.on('rooms:list', (_, ack) => {
@@ -862,10 +893,29 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
       ok(ack, { rooms: list });
     });
 
+    function markRead(room) {
+      room.readAt = room.readAt || {};
+      room.readAt[uid] = now();
+      saveRoom(room);
+    }
+
+    // 대화방을 열면 읽음 처리
     socket.on('room:get', ({ roomId } = {}, ack) => {
       const room = memberRoom(roomId, uid);
       if (!room) return fail(ack, 'not_found');
-      ok(ack, { room: summary(room, uid), messages: messagesFor(room.id, uid) });
+      markRead(room);
+      const s = summary(room, uid);
+      io.to(`u:${uid}`).emit('room:update', s);
+      ok(ack, { room: s, messages: messagesFor(room.id, uid) });
+    });
+
+    // 대화방을 보고 있는 동안 새 메시지가 오면 앱이 읽음을 알린다
+    socket.on('room:read', ({ roomId } = {}, ack) => {
+      const room = memberRoom(roomId, uid);
+      if (!room) return fail(ack, 'not_found');
+      markRead(room);
+      io.to(`u:${uid}`).emit('room:update', summary(room, uid));
+      ok(ack);
     });
 
     socket.on('msg:send', ({ roomId, text } = {}, ack) => {
@@ -1027,6 +1077,11 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
         saveRoom(room);
       }
       const st = roomState(room, t).status;
+      // 한 번 만료된 대화방은 설정이 바뀌어도 되살아나지 않게 닫아 둔다
+      if (st === 'expired' && !room.closed) {
+        room.closed = true;
+        saveRoom(room);
+      }
       if (st !== room._last) pushRoom(room);
     }
   }, 1000);

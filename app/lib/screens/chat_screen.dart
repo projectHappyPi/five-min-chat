@@ -19,11 +19,14 @@ class _ChatScreenState extends State<ChatScreen> {
   final _input = TextEditingController();
   final _scroll = ScrollController();
   Timer? _timer;
+  late final AppState _state;
   int _lastCount = 0;
 
   @override
   void initState() {
     super.initState();
+    _state = AppScope.read(context);
+    _state.openRoomId = widget.roomId;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         await AppScope.read(context).loadRoom(widget.roomId);
@@ -36,6 +39,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    if (_state.openRoomId == widget.roomId) _state.openRoomId = null;
     _timer?.cancel();
     _input.dispose();
     _scroll.dispose();

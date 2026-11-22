@@ -141,6 +141,16 @@ const step = (name) => {
   await B.call('msg:send', { roomId, text: '안녕하세요' });
   const got = await A.waitFor('msg', (d) => d.roomId === roomId);
   assert.strictEqual(got.message.text, '안녕하세요');
+  await B.call('msg:send', { roomId, text: '아까 카페에서 만났죠' });
+  const unreadUpd = await A.waitFor('room:update', (d) => d.id === roomId && d.unread === 2);
+  assert.ok(unreadUpd);
+  assert.strictEqual((await B.call('rooms:list')).rooms.find((r) => r.id === roomId).unread, 0);
+  assert.strictEqual((await A.call('room:get', { roomId })).room.unread, 0);
+  await B.call('msg:send', { roomId, text: '반가워요' });
+  await A.waitFor('room:update', (d) => d.id === roomId && d.unread === 1);
+  await A.call('room:read', { roomId });
+  assert.strictEqual((await A.call('rooms:list')).rooms.find((r) => r.id === roomId).unread, 0);
+  step('안 읽은 메시지 수: 상대 메시지만 세고, 대화방을 열거나 보고 있으면 0');
   await A.call('memo:set', { roomId, text: '고양이 키우는 카페 단골' });
   assert.strictEqual((await A.call('room:get', { roomId })).room.memo, '고양이 키우는 카페 단골');
   assert.strictEqual((await B.call('room:get', { roomId })).room.memo, '');
@@ -172,9 +182,27 @@ const step = (name) => {
   assert.strictEqual((await B.call('ext:request', { roomId })).error, 'cannot_extend');
   step('재도전은 대기 후 한 번만');
 
+  // 같은 사람이 다시 QR을 찍으면 기존 대화방
+  await A.call('room:hide', { roomId, hidden: true });
+  qr = await A.call('qr:new');
+  const again = await B.call('join', { token: qr.token });
+  assert.ok(again.ok && again.reused && again.room.id === roomId);
+  const usedAgain = await A.waitFor('qr:used', (d) => d.roomId === roomId);
+  assert.strictEqual(usedAgain.reused, true);
+  assert.strictEqual((await A.call('room:get', { roomId })).room.hidden, false);
+  assert.ok((await A.call('room:get', { roomId })).messages.find((m) => m.system && m.text.includes('다시 연결')));
+  assert.strictEqual(Object.keys((await admin('GET', '/api/rooms')).rooms).length, 1);
+  step('같은 사람이 다시 QR을 찍으면 새 방 대신 기존 대화방이 열리고 숨김도 풀림');
+
+  // 연장 가능 기간이 지나 만료된 뒤에는 새 대화방
+  await admin('PUT', '/api/settings', { extendWindowHours: 0.0003 });
+  await B.waitFor('room:update', (d) => d.id === roomId && d.status === 'expired', 6000);
+  await admin('PUT', '/api/settings', { extendWindowHours: 24 });
+
   qr = await A.call('qr:new');
   j = await B.call('join', { token: qr.token });
   const room3 = j.room.id;
+  assert.ok(!j.reused && room3 !== roomId);
   await B.waitFor('room:update', (d) => d.id === room3 && d.status === 'ended', 6000);
   await A.call('ext:request', { roomId: room3 });
   const acc = await B.call('ext:respond', { roomId: room3, accept: true });
@@ -222,7 +250,18 @@ const step = (name) => {
   step('블랙리스트 해제 후 다시 로그인, 관리자 화면에 CI 노출 없음');
 
   // ---------------- 닉네임 연결
-  const C = await client(back.token);
+  const K = await client(back.token);
+  qr = await A.call('qr:new');
+  assert.strictEqual((await K.call('join', { token: qr.token })).error, 'reported_pair');
+  step('신고한 적이 있는 상대와는 QR로 다시 연결되지 않음');
+
+  const park = await auth(PEOPLE.park);
+  const C = await client(park.token);
+  // A의 QR을 다른 사람이 써서 소모시킨 뒤에는 닉네임 연결이 안 된다
+  const tmp = await auth({ name: '정하늘', birth: '19920909', gender: 'F', phone: '01033334444' });
+  const T = await client(tmp.token);
+  const qrT = await A.call('qr:new');
+  await T.call('join', { token: qrT.token });
   assert.strictEqual((await C.call('nick:connect', { nickname: lee.user.nickname })).error, 'nick_not_waiting');
   await A.call('qr:new');
   assert.ok((await C.call('nick:connect', { nickname: lee.user.nickname })).ok);
@@ -249,7 +288,7 @@ const step = (name) => {
   step('QR 링크 페이지가 앱 열기 링크 제공');
 
   // ---------------- 재시작 후에도 데이터 유지
-  for (const c of [A, B, C]) c.close();
+  for (const c of [A, B, C, K, T]) c.close();
   await srv.close();
   srv = await boot();
   const after = await api('GET', '/api/check', null, { Authorization: `Bearer ${back.token}`, 'X-Device-Token': back.deviceToken });
