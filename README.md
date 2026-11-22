@@ -27,7 +27,7 @@
    - `DATABASE_URL` 입력칸에 1번에서 만든 주소를 붙여넣고 **Apply**
    - 몇 분 뒤 서비스 주소가 나온다 (예: `https://five-min-chat.onrender.com`)
    - 관리자 비밀번호: Render 의 서비스 화면 → **Environment** → `ADMIN_PASSWORD` 값
-3. 서비스 주소가 `https://five-min-chat.onrender.com` 이 아니면 `config/server_url.txt` 를 그 주소로 고친다
+3. 서비스 주소가 `https://five-min-chat-a5re.onrender.com` 이 아니면 `config/server_url.txt` 를 그 주소로 고친다
 4. GitHub 의 **Actions** 탭에서 `Android APK` 가 끝나면 **Releases → 테스트용 안드로이드 APK** 에 `app-release.apk` 가 올라온다
 
 ## 테스트 방법 (PC 웹 + 안드로이드 폰)
