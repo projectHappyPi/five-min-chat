@@ -7,6 +7,7 @@ import '../main.dart';
 import '../state.dart';
 import '../theme.dart';
 import 'scanner_view.dart';
+import 'translate_lab.dart';
 
 /// 하단 탭: 내 QR(홈) / 스캔 / 대화
 class HomeShell extends StatefulWidget {
@@ -147,8 +148,12 @@ class _QrTabState extends State<QrTab> {
                 onSelected: (v) {
                   if (v == 'reroll') _reroll();
                   if (v == 'server') state.resetServer();
+                  if (v == 'translate') {
+                    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const TranslateLabScreen()));
+                  }
                 },
                 itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'translate', child: Text('통역 모델 시험')),
                   PopupMenuItem(value: 'reroll', child: Text('닉네임 다시 뽑기')),
                   PopupMenuItem(value: 'server', child: Text('서버 주소 바꾸기')),
                 ],

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../state.dart';
 import '../theme.dart';
+import '../translator.dart';
 import 'detail_screen.dart';
 import 'ext_sheet.dart';
 
@@ -280,13 +281,38 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class _Bubble extends StatelessWidget {
+class _Bubble extends StatefulWidget {
   const _Bubble(this.m);
   final Msg m;
+  @override
+  State<_Bubble> createState() => _BubbleState();
+}
+
+class _BubbleState extends State<_Bubble> {
+  String? _translated;
+  bool _busy = false;
+
+  Future<void> _translate() async {
+    final t = Translator.instance;
+    if (!t.ready) {
+      toast('통역 모델이 없어요. 내 QR 탭 메뉴 → 통역 모델 시험에서 받아 주세요');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final r = await t.translate(widget.m.text);
+      if (mounted) setState(() => _translated = r.text);
+    } catch (e) {
+      toast(e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final p = context.pal;
+    final m = widget.m;
     if (m.system) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -295,7 +321,9 @@ class _Bubble extends StatelessWidget {
     }
     return Align(
       alignment: m.mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
+      child: GestureDetector(
+        onLongPress: _busy ? null : _translate,
+        child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
@@ -308,7 +336,22 @@ class _Bubble extends StatelessWidget {
             bottomRight: Radius.circular(m.mine ? 6 : 18),
           ),
         ),
-        child: Text(m.text, style: TextStyle(fontSize: 15, height: 1.45, color: p.text)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(m.text, style: TextStyle(fontSize: 15, height: 1.45, color: p.text)),
+            if (_busy) ...[
+              const SizedBox(height: 6),
+              Text('번역 중…', style: TextStyle(fontSize: 12, color: p.muted)),
+            ],
+            if (_translated != null) ...[
+              Divider(height: 14, color: p.line),
+              Text(_translated!, style: TextStyle(fontSize: 14, height: 1.45, color: p.muted)),
+            ],
+          ],
+        ),
+      ),
       ),
     );
   }
