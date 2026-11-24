@@ -33,19 +33,12 @@ jobs:
       - name: Generate Android project files
         run: flutter create --platforms=android --org com.happypi --project-name five_min_chat .
 
-      # 통역 엔진(llamadart, llama.cpp)은 안드로이드 10(API 29) 이상, 64비트 폰에서만 돈다
-      - name: Set minSdk 29
-        run: |
-          f=android/app/build.gradle.kts
-          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 29/' "$f"
-          grep -n "minSdk" "$f"
-
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - run: flutter test
 
       - name: Build APK (서버 주소는 config/server_url.txt)
-        run: flutter build apk --release --target-platform android-arm64 --dart-define=SERVER_URL=$(cat ../config/server_url.txt | tr -d '[:space:]')
+        run: flutter build apk --release --target-platform android-arm,android-arm64 --dart-define=SERVER_URL=$(cat ../config/server_url.txt | tr -d '[:space:]')
 
       - uses: actions/upload-artifact@v4
         with:

@@ -8,6 +8,7 @@ import '../theme.dart';
 import '../translator.dart';
 import 'detail_screen.dart';
 import 'ext_sheet.dart';
+import 'lang_sheet.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.roomId});
@@ -31,6 +32,8 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         await AppScope.read(context).loadRoom(widget.roomId);
+        // 대화방에 처음 들어오면 이 대화에서 쓸 내 언어부터 고른다
+        if (mounted && _state.rooms[widget.roomId]?.myLang == null) await _askLang();
       } catch (e) {
         toast(e.toString());
       }
@@ -47,14 +50,50 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  Future<void> _send() async {
-    final text = _input.text.trim();
-    if (text.isEmpty) return;
-    _input.clear();
+  Future<void> _askLang() async {
+    final room = _state.rooms[widget.roomId];
+    final l = await pickLanguage(context,
+        initial: _state.me?.lang ?? deviceLangCode(), partnerLang: room?.partnerLang, first: true);
+    if (l == null) return;
     try {
-      await AppScope.read(context).send(widget.roomId, text);
+      await _state.setRoomLang(widget.roomId, l);
+      final r = _state.rooms[widget.roomId];
+      if (r?.partnerLang != null && r!.partnerLang != l && !_state.translateOn(widget.roomId)) {
+        toast('상대 언어는 ${langOf(r.partnerLang)?.koName}예요. 위의 번역 버튼으로 자동 번역을 켤 수 있어요');
+      }
     } catch (e) {
       toast(e.toString());
+    }
+  }
+
+  bool _sending = false;
+  Future<void> _send() async {
+    final text = _input.text.trim();
+    if (text.isEmpty || _sending) return;
+    _input.clear();
+    setState(() => _sending = true);
+    try {
+      await _state.send(widget.roomId, text);
+    } on ApiError catch (e) {
+      if (e.code == 'lang_pack') {
+        _input.text = text; // 못 보낸 말은 입력창에 되돌린다
+        final r = _state.rooms[widget.roomId];
+        if (r != null && await ensurePacks(context, [r.myLang!, r.partnerLang!])) {
+          _input.clear();
+          try {
+            await _state.send(widget.roomId, text);
+          } catch (err) {
+            toast(err.toString());
+          }
+        }
+      } else {
+        toast(e.toString());
+      }
+    } catch (e) {
+      _input.text = text;
+      toast('번역하지 못해서 보내지 않았어요: $e');
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
   }
 
@@ -115,12 +154,24 @@ class _ChatScreenState extends State<ChatScreen> {
                   Text(room.partnerNickname, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: p.text)),
                   Icon(Icons.chevron_right, size: 18, color: p.muted),
                 ]),
-                Text(timer, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: timerColor)),
+                Text(
+                  [
+                    timer,
+                    if (state.translateOn(room.id) && room.partnerLang != null && room.partnerLang != room.myLang)
+                      '번역 ${langOf(room.myLang)?.koName ?? '?'}↔${langOf(room.partnerLang)?.koName ?? '?'}',
+                  ].join(' · '),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: timerColor),
+                ),
               ],
             ),
           ),
         ),
         actions: [
+          IconButton(
+            tooltip: '번역',
+            onPressed: () => showTranslateSheet(context, room.id),
+            icon: Icon(Icons.translate, color: state.translateOn(room.id) ? p.accent : p.muted),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: ActionChip(
@@ -146,7 +197,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Text('대화방이 열렸어요 · ${_freeLabel(state)} 무료', style: TextStyle(fontSize: 12, color: p.muted)),
                 ),
                 const SizedBox(height: 12),
-                for (final m in msgs) _Bubble(m),
+                for (final m in msgs) _Bubble(m, state.shown(m, room)),
               ],
             ),
           ),
@@ -184,7 +235,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           const SizedBox(width: 8),
           IconButton.filled(
-            tooltip: '보내기',
+            tooltip: state.translateOn(room.id) ? '번역해서 보내기' : '보내기',
             style: IconButton.styleFrom(backgroundColor: p.accent, foregroundColor: p.onAccent, minimumSize: const Size(48, 48)),
             onPressed: _send,
             icon: const Icon(Icons.arrow_upward),
@@ -281,38 +332,14 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 }
 
-class _Bubble extends StatefulWidget {
-  const _Bubble(this.m);
+class _Bubble extends StatelessWidget {
+  const _Bubble(this.m, this.view);
   final Msg m;
-  @override
-  State<_Bubble> createState() => _BubbleState();
-}
-
-class _BubbleState extends State<_Bubble> {
-  String? _translated;
-  bool _busy = false;
-
-  Future<void> _translate() async {
-    final t = Translator.instance;
-    if (!t.ready) {
-      toast('통역 모델이 없어요. 내 QR 탭 메뉴 → 통역 모델 시험에서 받아 주세요');
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final r = await t.translate(widget.m.text);
-      if (mounted) setState(() => _translated = r.text);
-    } catch (e) {
-      toast(e.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
+  final ({String main, String? sub}) view;
 
   @override
   Widget build(BuildContext context) {
     final p = context.pal;
-    final m = widget.m;
     if (m.system) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
@@ -321,9 +348,7 @@ class _BubbleState extends State<_Bubble> {
     }
     return Align(
       alignment: m.mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: GestureDetector(
-        onLongPress: _busy ? null : _translate,
-        child: Container(
+      child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.72),
@@ -340,18 +365,13 @@ class _BubbleState extends State<_Bubble> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(m.text, style: TextStyle(fontSize: 15, height: 1.45, color: p.text)),
-            if (_busy) ...[
-              const SizedBox(height: 6),
-              Text('번역 중…', style: TextStyle(fontSize: 12, color: p.muted)),
-            ],
-            if (_translated != null) ...[
-              Divider(height: 14, color: p.line),
-              Text(_translated!, style: TextStyle(fontSize: 14, height: 1.45, color: p.muted)),
+            Text(view.main, style: TextStyle(fontSize: 15, height: 1.45, color: p.text)),
+            if (view.sub != null) ...[
+              const SizedBox(height: 4),
+              Text(view.sub!, style: TextStyle(fontSize: 12.5, height: 1.4, color: p.muted)),
             ],
           ],
         ),
-      ),
       ),
     );
   }

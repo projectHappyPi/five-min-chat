@@ -265,7 +265,7 @@ async function openRoom(id, reason = '') {
     h('div', { class: 'box' }, h('div', { class: 'chatlog' },
       d.messages.length ? d.messages.map((m) => m.system
         ? h('div', { class: 'msg system' }, `${m.text} · ${fmt(m.at)}`)
-        : h('div', { class: `msg ${m.fromId === r.a.id ? 'theirs' : 'mine'}` }, h('div', { class: 'who' }, `${m.from} · ${fmt(m.at)}`), m.text))
+        : h('div', { class: `msg ${m.fromId === r.a.id ? 'theirs' : 'mine'}` }, h('div', { class: 'who' }, `${m.from} · ${fmt(m.at)}${m.lang ? ' · ' + m.lang : ''}`), m.text, m.tr ? h('div', { class: 'who' }, `번역(${m.tr.lang}): ${m.tr.text}`) : null))
       : empty('메시지가 없어요'))),
     h('div', { class: 'toolbar' },
       h('button', { class: 'ghost danger', onclick: () => blockUser(r.a) }, `${r.a.nickname} 차단`),

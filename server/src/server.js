@@ -126,7 +126,18 @@ async function start(opts = {}) {
 
   function publicUser(u) {
     ensureNickname(u);
-    return { id: u.id, nickname: u.nickname, coins: u.coins, gender: u.gender, age: manAge(u.birth), birthYear: +u.birth.slice(0, 4) };
+    return { id: u.id, nickname: u.nickname, coins: u.coins, gender: u.gender, age: manAge(u.birth), birthYear: +u.birth.slice(0, 4), lang: u.lang || null };
+  }
+
+  // 대화방에서 고를 수 있는 언어 (앱의 번역 엔진 ML Kit 코드와 같다)
+  const LANGS = ['ko', 'en', 'ja', 'zh', 'vi', 'th', 'id', 'es', 'fr', 'de', 'ru', 'pt'];
+  const cleanLang = (v) => (LANGS.includes(String(v || '')) ? String(v) : null);
+  // 보낸 번역본: { lang, text } — 받는 사람 언어로 앱이 번역해서 보낸다
+  function cleanTr(tr) {
+    if (!tr || typeof tr !== 'object') return null;
+    const lang = cleanLang(tr.lang);
+    const text = String(tr.text || '').trim().slice(0, 1000);
+    return lang && text ? { lang, text } : null;
   }
 
   function findByNickname(name) {
@@ -227,6 +238,8 @@ async function start(opts = {}) {
     return {
       id: room.id,
       partnerNickname: room.a === uid ? room.nickB : room.nickA,
+      myLang: (room.lang && room.lang[uid]) || null,
+      partnerLang: (room.lang && room.lang[room.a === uid ? room.b : room.a]) || null,
       via: room.via,
       createdAt: room.createdAt,
       memo: room.memos[uid] || '',
@@ -237,14 +250,21 @@ async function start(opts = {}) {
       endedAt: st.endedAt || null,
       windowEnd: st.windowEnd || null,
       ext: extInfo,
-      lastMessage: last ? { text: last.text, at: last.at, mine: last.from === uid } : null,
+      lastMessage: last ? { text: shownText(last, uid, room), at: last.at, mine: last.from === uid } : null,
       unread: msgs.filter((m) => !m.system && m.from !== uid && m.at > ((room.readAt && room.readAt[uid]) || 0)).length,
       serverNow: now(),
     };
   }
 
-  const messagesFor = (roomId, uid) =>
-    (db.messages[roomId] || []).map((m) => ({ id: m.id, text: m.text, at: m.at, system: !!m.system, mine: m.from === uid }));
+  const msgView = (m, uid) => ({ id: m.id, text: m.text, lang: m.lang || null, tr: m.tr || null, at: m.at, system: !!m.system, mine: m.from === uid });
+  const messagesFor = (roomId, uid) => (db.messages[roomId] || []).map((m) => msgView(m, uid));
+
+  // 목록 미리보기: 상대 메시지는 내 언어 번역본이 있으면 그걸 보여준다
+  function shownText(m, uid, room) {
+    const myLang = room.lang && room.lang[uid];
+    if (m.from !== uid && m.tr && m.tr.lang === myLang) return m.tr.text;
+    return m.text;
+  }
 
   function pushRoom(room) {
     room._last = roomState(room).status;
@@ -253,12 +273,14 @@ async function start(opts = {}) {
 
   const pushMe = (user) => io.to(`u:${user.id}`).emit('me:update', publicUser(user));
 
-  function addMessage(room, from, text, system = false) {
+  function addMessage(room, from, text, system = false, extra = {}) {
     const m = { id: newId(6), roomId: room.id, from, system, text, at: now() };
+    if (extra.lang) m.lang = extra.lang;
+    if (extra.tr) m.tr = extra.tr;
     (db.messages[room.id] = db.messages[room.id] || []).push(m);
     store.addMessage(m);
     for (const uid of [room.a, room.b]) {
-      io.to(`u:${uid}`).emit('msg', { roomId: room.id, message: { id: m.id, text, at: m.at, system, mine: uid === from } });
+      io.to(`u:${uid}`).emit('msg', { roomId: room.id, message: msgView(m, uid) });
     }
     return m;
   }
@@ -309,6 +331,7 @@ async function start(opts = {}) {
       hidden: {},
       reportedBy: {},
       readAt: {},
+      lang: {}, // 사용자별 대화 언어. 대화방에 처음 들어갈 때 고른다
     };
     db.rooms[room.id] = room;
     db.messages[room.id] = [];
@@ -623,6 +646,8 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
         at: m.at,
         system: !!m.system,
         text: m.text,
+        lang: m.lang || null,
+        tr: m.tr || null,
         from: m.system ? null : m.from === r.a ? r.nickA : r.nickB,
         fromId: m.from,
       })),
@@ -794,6 +819,7 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
     expired: 'QR이 만료됐어요. 상대에게 새 QR을 보여 달라고 해 주세요',
     self: '내 QR은 내가 찍을 수 없어요',
     not_live: '대화 시간이 끝났어요',
+    bad_lang: '지원하지 않는 언어예요',
     empty: '메시지를 입력해 주세요',
     coins: '재화가 부족해요',
     cannot_extend: '지금은 연장을 요청할 수 없어요',
@@ -918,14 +944,33 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
       ok(ack);
     });
 
-    socket.on('msg:send', ({ roomId, text } = {}, ack) => {
+    // 이 대화방에서 쓰는 내 언어. 다음 대화방의 기본값으로도 기억한다
+    socket.on('room:lang', ({ roomId, lang } = {}, ack) => {
+      const room = memberRoom(roomId, uid);
+      if (!room) return fail(ack, 'not_found');
+      const l = cleanLang(lang);
+      if (!l) return fail(ack, 'bad_lang');
+      room.lang = room.lang || {};
+      room.lang[uid] = l;
+      saveRoom(room);
+      const user = db.users[uid];
+      if (user && user.lang !== l) {
+        user.lang = l;
+        saveUser(user);
+        pushMe(user);
+      }
+      pushRoom(room);
+      ok(ack, { room: summary(room, uid) });
+    });
+
+    socket.on('msg:send', ({ roomId, text, tr } = {}, ack) => {
       const room = memberRoom(roomId, uid);
       if (!room) return fail(ack, 'not_found');
       const st = roomState(room).status;
       if (st !== 'live' && st !== 'extended') return fail(ack, 'not_live');
       const t = String(text || '').trim().slice(0, 500);
       if (!t) return fail(ack, 'empty');
-      const m = addMessage(room, uid, t);
+      const m = addMessage(room, uid, t, false, { lang: (room.lang && room.lang[uid]) || null, tr: cleanTr(tr) });
       for (const u of [room.a, room.b]) io.to(`u:${u}`).emit('room:update', summary(room, u));
       ok(ack, { id: m.id });
     });

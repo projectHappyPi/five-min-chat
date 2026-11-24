@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
+import 'translator.dart';
+
 // ---------------------------------------------------------------- 모델
 
 class ApiError implements Exception {
@@ -28,8 +30,10 @@ class Me {
         coins = _int(m['coins']),
         gender = m['gender'] as String? ?? '',
         age = _int(m['age']),
-        birthYear = _int(m['birthYear']);
+        birthYear = _int(m['birthYear']),
+        lang = m['lang'] as String?;
   final String id;
+  final String? lang; // 마지막으로 고른 대화 언어 (새 대화방 기본값)
   final String nickname;
   final int coins;
   final String gender; // M, F
@@ -80,6 +84,8 @@ class Room {
   Room.fromJson(Map<String, dynamic> m)
       : id = m['id'] as String,
         partnerNickname = m['partnerNickname'] as String,
+        myLang = m['myLang'] as String?,
+        partnerLang = m['partnerLang'] as String?,
         via = m['via'] as String? ?? 'qr',
         createdAt = _int(m['createdAt']),
         memo = m['memo'] as String? ?? '',
@@ -95,6 +101,8 @@ class Room {
         serverNow = _int(m['serverNow']);
   final String id;
   final String partnerNickname;
+  final String? myLang; // 이 대화방에서 내가 쓰는 언어 (처음 들어올 때 고른다)
+  final String? partnerLang;
   final String via;
   final int createdAt;
   final String memo;
@@ -116,11 +124,17 @@ class Msg {
   Msg.fromJson(Map<String, dynamic> m)
       : id = m['id'] as String,
         text = m['text'] as String,
+        lang = m['lang'] as String?,
+        trLang = (m['tr'] as Map?)?['lang'] as String?,
+        trText = (m['tr'] as Map?)?['text'] as String?,
         at = _int(m['at']),
         system = m['system'] == true,
         mine = m['mine'] == true;
   final String id;
-  final String text;
+  final String text; // 보낸 사람이 쓴 원문
+  final String? lang; // 원문 언어
+  final String? trLang; // 보낸 사람이 함께 보낸 번역본 (상대 언어)
+  final String? trText;
   final int at;
   final bool system;
   final bool mine;
@@ -193,6 +207,17 @@ class AppState extends ChangeNotifier {
   String? pendingJoin; // 로그인 전에 찍은 QR: 로그인 뒤 바로 들어간다
   String? openRoomId; // 지금 화면에 열려 있는 대화방
   bool lastJoinReused = false;
+
+  // ---------------- 번역
+  /// 받은 메시지를 내 폰에서 번역한 결과 (상대가 번역 없이 보냈을 때)
+  final Map<String, String> localTr = {};
+  final Set<String> _translating = {};
+  bool translateOn(String roomId) => _prefs.getBool('tr:$roomId') ?? false;
+  Future<void> setTranslate(String roomId, bool on) async {
+    await _prefs.setBool('tr:$roomId', on);
+    notifyListeners();
+    if (on) unawaited(translateIncoming(roomId));
+  }
 
   int get totalUnread => rooms.values.where((r) => !r.hidden && r.status != 'expired').fold(0, (sum, r) => sum + r.unread);
   Me? me;
@@ -431,6 +456,7 @@ class AppState extends ChangeNotifier {
       final msg = Msg.fromJson(_map(m['message']));
       final list = messages[roomId];
       if (list != null && !list.any((x) => x.id == msg.id)) list.add(msg);
+      if (!msg.mine && !msg.system) unawaited(translateIncoming(roomId));
       // 지금 보고 있는 대화방이면 바로 읽음 처리
       if (roomId == openRoomId && !msg.mine) unawaited(call('room:read', {'roomId': roomId}).then((_) {}, onError: (_) {}));
       notifyListeners();
@@ -569,9 +595,67 @@ class AppState extends ChangeNotifier {
     rooms[roomId] = Room.fromJson(_map(m['room']));
     messages[roomId] = (m['messages'] as List).map((e) => Msg.fromJson(_map(e))).toList();
     notifyListeners();
+    unawaited(translateIncoming(roomId));
   }
 
-  Future<void> send(String roomId, String text) => call('msg:send', {'roomId': roomId, 'text': text});
+  Future<void> setRoomLang(String roomId, String lang) async {
+    final m = await call('room:lang', {'roomId': roomId, 'lang': lang});
+    rooms[roomId] = Room.fromJson(_map(m['room']));
+    notifyListeners();
+    unawaited(translateIncoming(roomId));
+  }
+
+  /// 보내기. 번역이 켜져 있고 상대 언어가 다르면 상대 언어 번역본을 같이 보낸다
+  Future<void> send(String roomId, String text) async {
+    final room = rooms[roomId];
+    Map<String, String>? tr;
+    final from = room?.myLang, to = room?.partnerLang;
+    if (room != null && translateOn(roomId) && from != null && to != null && from != to) {
+      final t = Translator.instance;
+      final missing = await t.missing(from, to);
+      if (missing.isNotEmpty) throw ApiError('lang_pack', '번역 언어 팩을 먼저 받아 주세요');
+      tr = {'lang': to, 'text': await t.translate(text, from: from, to: to)};
+    }
+    await call('msg:send', {'roomId': roomId, 'text': text, if (tr != null) 'tr': tr});
+  }
+
+  /// 화면에 보여줄 상대 메시지: 내 언어 번역본이 있으면 그것, 원문은 작게
+  ({String main, String? sub}) shown(Msg m, Room? room) {
+    if (m.mine) return (main: m.text, sub: m.trText != null && m.trText != m.text ? '→ ${m.trText}' : null);
+    final my = room?.myLang;
+    String? t;
+    if (m.trText != null && m.trLang == my) {
+      t = m.trText;
+    } else if (room != null && translateOn(room.id)) {
+      t = localTr[m.id];
+    }
+    if (t == null || t == m.text) return (main: m.text, sub: null);
+    return (main: t, sub: '원문: ${m.text}');
+  }
+
+  /// 번역이 켜져 있으면, 내 언어 번역본 없이 온 상대 메시지를 내 폰에서 번역한다
+  Future<void> translateIncoming(String roomId) async {
+    final room = rooms[roomId];
+    final my = room?.myLang;
+    if (room == null || my == null || !translateOn(roomId)) return;
+    final t = Translator.instance;
+    for (final m in List.of(messages[roomId] ?? const <Msg>[])) {
+      if (m.mine || m.system || localTr.containsKey(m.id) || _translating.contains(m.id)) continue;
+      if (m.trText != null && m.trLang == my) continue;
+      final src = m.lang ?? room.partnerLang;
+      if (src == null || src == my) continue;
+      if ((await t.missing(src, my)).isNotEmpty) return;
+      _translating.add(m.id);
+      try {
+        localTr[m.id] = await t.translate(m.text, from: src, to: my);
+        notifyListeners();
+      } catch (_) {
+        // 번역에 실패하면 원문을 그대로 보여준다
+      } finally {
+        _translating.remove(m.id);
+      }
+    }
+  }
 
   Future<void> setMemo(String roomId, String text) => call('memo:set', {'roomId': roomId, 'text': text});
 

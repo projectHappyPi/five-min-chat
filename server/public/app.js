@@ -185,7 +185,7 @@ function start(token) {
     state.offset = r.serverNow - Date.now();
     state.rooms.set(r.id, r);
     renderRooms();
-    if (state.current === r.id) renderChat();
+    if (state.current === r.id) { renderChat(); renderMessages(); }
   });
   socket.on('msg', ({ roomId, message }) => {
     const list = state.messages.get(roomId);
@@ -325,18 +325,40 @@ async function openRoom(roomId) {
 
 function renderMessages() {
   const list = state.messages.get(state.current) || [];
+  const r = state.rooms.get(state.current);
   const box = $('messages');
   box.replaceChildren(
     h('div', { class: 'msg system' }, `대화방이 열렸어요 · ${freeLabel()} 무료`),
-    ...list.map((m) => h('div', { class: `msg ${m.system ? 'system' : m.mine ? 'mine' : 'theirs'}` }, m.text)));
+    ...list.map((m) => {
+      if (m.system) return h('div', { class: 'msg system' }, m.text);
+      const v = msgShown(m, r && r.myLang);
+      return h('div', { class: `msg ${m.mine ? 'mine' : 'theirs'}` }, v.main, v.sub ? h('div', { class: 'msg-sub' }, v.sub) : null);
+    }));
   box.scrollTop = box.scrollHeight;
 }
+
+// 번역본이 내 언어면 번역본을 크게, 원문을 작게 보여준다. 내가 보낸 건 원문 + 상대에게 간 번역
+function msgShown(m, myLang) {
+  if (m.mine) return { main: m.text, sub: m.tr ? `→ ${m.tr.text}` : null };
+  if (m.tr && m.tr.lang === myLang && m.tr.text !== m.text) return { main: m.tr.text, sub: `원문: ${m.text}` };
+  return { main: m.text, sub: null };
+}
+
+$('chat-lang').addEventListener('change', async (e) => {
+  if (!e.target.value) return;
+  const r = await socket.call('room:lang', { roomId: state.current, lang: e.target.value });
+  if (!r.ok) return toast(r.message);
+  state.rooms.set(state.current, r.room);
+  renderMessages();
+  toast('이 대화방의 내 언어를 바꿨어요');
+});
 
 let footKey = '';
 function renderChat() {
   const r = state.rooms.get(state.current);
   if (!r) return;
-  $('chat-name').textContent = r.partnerNickname;
+  $('chat-name').textContent = r.partnerNickname + (r.partnerLang ? ` · ${r.partnerLang}` : '');
+  if (document.activeElement !== $('chat-lang')) $('chat-lang').value = r.myLang || '';
   $('chat-memo').textContent = '✎ ' + memoShort(r.memo);
   tickChat();
 

@@ -156,6 +156,20 @@ const step = (name) => {
   assert.strictEqual((await B.call('room:get', { roomId })).room.memo, '');
   step('실시간 메시지, 메모는 나만 보임');
 
+  assert.strictEqual(j.room.myLang, null);
+  assert.strictEqual((await B.call('room:lang', { roomId, lang: 'xx' })).error, 'bad_lang');
+  const lb = await B.call('room:lang', { roomId, lang: 'en' });
+  assert.strictEqual(lb.room.myLang, 'en');
+  await A.call('room:lang', { roomId, lang: 'ko' });
+  assert.strictEqual((await B.call('room:get', { roomId })).room.partnerLang, 'ko');
+  assert.strictEqual((await B.call('me')).user.lang, 'en');
+  await A.call('msg:send', { roomId, text: '어디서 왔어요?', tr: { lang: 'en', text: 'Where are you from?' } });
+  const trMsg = await B.waitFor('msg', (d) => d.roomId === roomId && d.message.tr);
+  assert.deepStrictEqual([trMsg.message.text, trMsg.message.lang, trMsg.message.tr.text], ['어디서 왔어요?', 'ko', 'Where are you from?']);
+  assert.strictEqual((await B.call('rooms:list')).rooms.find((r) => r.id === roomId).lastMessage.text, 'Where are you from?');
+  assert.strictEqual((await A.call('rooms:list')).rooms.find((r) => r.id === roomId).lastMessage.text, '어디서 왔어요?');
+  step('대화방별 내 언어 선택, 번역본 함께 저장·전달, 목록은 내 언어로');
+
   await B.waitFor('room:update', (d) => d.id === roomId && d.status === 'ended', 6000);
   assert.strictEqual((await B.call('msg:send', { roomId, text: '늦었나요' })).error, 'not_live');
   step('무료 시간(테스트 2초) 뒤 종료, 종료 후 메시지 거부');
@@ -164,7 +178,7 @@ const step = (name) => {
   let rq = await B.call('ext:request', { roomId });
   assert.ok(rq.ok && rq.room.status === 'pending');
   await A.waitFor('ext:incoming');
-  assert.strictEqual((await B.waitFor('me:update')).coins, 90);
+  assert.ok(await B.waitFor('me:update', (d) => d.coins === 90));
   assert.strictEqual((await A.call('ext:respond', { roomId, accept: false })).error, 'reason');
   await A.call('ext:respond', { roomId, accept: false, reasonId: 'r1' });
   let gb = await B.call('room:get', { roomId });

@@ -52,6 +52,15 @@
         <button id="chat-name" class="link-btn name"></button>
         <span id="chat-clock" class="mono small"></span>
         <span class="spacer"></span>
+        <label class="small muted">내 언어
+          <select id="chat-lang" class="lang-select" aria-label="이 대화방에서 쓰는 내 언어">
+            <option value="">선택</option>
+            <option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option>
+            <option value="zh">中文</option><option value="vi">Tiếng Việt</option><option value="th">ไทย</option>
+            <option value="id">Bahasa Indonesia</option><option value="es">Español</option><option value="fr">Français</option>
+            <option value="de">Deutsch</option><option value="ru">Русский</option><option value="pt">Português</option>
+          </select>
+        </label>
         <button id="chat-memo" class="chip"></button>
       </div>
       <div id="messages" class="messages" aria-live="polite"></div>
