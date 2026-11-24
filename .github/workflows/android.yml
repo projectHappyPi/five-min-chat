@@ -33,6 +33,13 @@ jobs:
       - name: Generate Android project files
         run: flutter create --platforms=android --org com.happypi --project-name five_min_chat .
 
+      # 실제 폰(ARM)용만 넣는다. PC 에뮬레이터용(x86_64) 라이브러리를 빼서 용량을 줄인다
+      - name: Keep only ARM libraries
+        run: |
+          f=android/app/build.gradle.kts
+          sed -i 's/^\(\s*\)minSdk = \(.*\)$/\1minSdk = \2\n\1ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }/' "$f"
+          grep -n -A1 "minSdk" "$f"
+
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - run: flutter test
