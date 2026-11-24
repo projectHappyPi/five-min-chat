@@ -37,8 +37,17 @@ jobs:
       - name: Keep only ARM libraries
         run: |
           f=android/app/build.gradle.kts
-          sed -i 's/^\(\s*\)minSdk = \(.*\)$/\1minSdk = \2\n\1ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }/' "$f"
-          grep -n -A1 "minSdk" "$f"
+          cat >> "$f" <<'GRADLE'
+
+android {
+    packaging {
+        jniLibs {
+            excludes += setOf("lib/x86_64/**", "lib/x86/**")
+        }
+    }
+}
+GRADLE
+          tail -8 "$f"
 
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
