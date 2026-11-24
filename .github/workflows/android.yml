@@ -37,16 +37,7 @@ jobs:
       - name: Keep only ARM libraries
         run: |
           f=android/app/build.gradle.kts
-          cat >> "$f" <<'GRADLE'
-
-android {
-    packaging {
-        jniLibs {
-            excludes += setOf("lib/x86_64/**", "lib/x86/**")
-        }
-    }
-}
-GRADLE
+          printf '\nandroid {\n    packaging {\n        jniLibs {\n            excludes += setOf("lib/x86_64/**", "lib/x86/**")\n        }\n    }\n}\n' >> "$f"
           tail -8 "$f"
 
       - run: flutter pub get
