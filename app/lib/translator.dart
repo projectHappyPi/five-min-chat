@@ -107,12 +107,14 @@ class Translator extends ChangeNotifier {
     if (from == to || text.trim().isEmpty) return text;
     final key = '$from>$to';
     final engine = _engines[key] ??= OnDeviceTranslator(
-      sourceLanguage: TranslateLanguage.fromRawValue(from)!,
-      targetLanguage: TranslateLanguage.fromRawValue(to)!,
+      sourceLanguage: _mlLang(from),
+      targetLanguage: _mlLang(to),
     );
     final out = await engine.translateText(text);
     return out.trim();
   }
+
+  static TranslateLanguage _mlLang(String code) => TranslateLanguage.values.firstWhere((l) => l.bcpCode == code);
 
   Future<void> _closeEnginesUsing(String code) async {
     final keys = _engines.keys.where((k) => k.split('>').contains(code)).toList();
