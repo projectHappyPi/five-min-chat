@@ -23,3 +23,10 @@ services:
       # Supabase 의 Session pooler 연결 주소를 블루프린트 만들 때 직접 넣는다
       - key: DATABASE_URL
         sync: false
+      # 대화·개인정보 DB 암호화 키 (pgcrypto). 테스트 동안은 testkey.
+      # 정식 운영 전 긴 무작위 값으로 바꾸되, 한 번 바꾸면 기존 데이터를 새 키로 다시 암호화해야 한다
+      - key: DB_CRYPTO_KEY
+        value: testkey
+      # 카카오 디벨로퍼스 > 앱 > 앱 키 화면의 "앱 ID"(숫자). 비워 두면 카카오 가입은 테스트 모드
+      - key: KAKAO_APP_ID
+        sync: false

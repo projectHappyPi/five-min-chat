@@ -234,6 +234,7 @@ function setMe(u) {
   state.me = u;
   $('me-info').textContent = `${u.gender === 'F' ? '여성' : '남성'} · 만 ${u.age}세`;
   $('nickname').textContent = u.nickname;
+  $('my-emoji').textContent = u.emoji || '🙂';
   $('coins').textContent = u.coins;
 }
 
@@ -301,7 +302,7 @@ function renderRooms() {
     ...list.map((r) =>
       h('li', {},
         h('button', { 'aria-current': String(state.current === r.id), onclick: () => openRoom(r.id) },
-          h('span', { class: 'avatar' }, r.partnerNickname[0]),
+          h('span', { class: r.partnerEmoji ? 'avatar emoji' : 'avatar' }, r.partnerEmoji || r.partnerNickname[0]),
           h('span', { class: 'room-main' }, h('b', {}, r.partnerNickname), h('span', {}, preview(r))),
           h('span', { class: 'room-side' }, badge(r), r.unread > 0 ? h('span', { class: 'unread' }, r.unread > 99 ? '99+' : r.unread) : null)))));
   $('rooms-empty').hidden = list.length > 0;
@@ -542,4 +543,36 @@ $('report-send').addEventListener('click', async () => {
   if (!r.ok) return ($('report-error').textContent = r.message);
   $('dlg-report').close();
   toast('신고했어요. 관리자가 확인할게요');
+});
+
+// ---------------------------------------------------------------- 내 이모지
+const REQ_LABEL = { pending: '검토 중', approved: '승인', rejected: '반려' };
+function drawEmoji(c) {
+  $('emoji-free').replaceChildren(...c.free.map((e) => h('button', { type: 'button', 'aria-pressed': String(e === c.current), onclick: () => emojiCall('emoji:set', { emoji: e }) }, e)));
+  $('emoji-shop').replaceChildren(...c.shop.map((i) => h('button', {
+    type: 'button',
+    'aria-pressed': String(i.emoji === c.current),
+    onclick: () => (i.owned ? emojiCall('emoji:set', { emoji: i.emoji }) : confirm(`${i.emoji} 를 재화 ${i.price}개로 살까요?`) && emojiCall('emoji:buy', { id: i.id })),
+  }, i.emoji, h('small', {}, i.owned ? '보유' : `${i.price}`))));
+  $('emoji-reqs').replaceChildren(...c.requests.map((r) => h('li', {}, `${r.emoji || ''} ${r.note || ''} · ${REQ_LABEL[r.status]}${r.answer ? ' · ' + r.answer : ''}`)));
+}
+async function emojiCall(ev, body) {
+  const r = await socket.call(ev, body);
+  if (!r.ok) return toast(r.message);
+  drawEmoji(r);
+  return r;
+}
+$('my-emoji').addEventListener('click', async () => {
+  const r = await socket.call('emoji:list');
+  if (!r.ok) return toast(r.message);
+  drawEmoji(r);
+  $('dlg-emoji').showModal();
+});
+$('emoji-req-send').addEventListener('click', async () => {
+  const r = await emojiCall('emoji:request', { emoji: $('emoji-req-emoji').value.trim(), note: $('emoji-req-note').value.trim() });
+  if (r) {
+    $('emoji-req-emoji').value = '';
+    $('emoji-req-note').value = '';
+    toast('신청했어요. 관리자가 확인하면 결과가 여기에 보여요');
+  }
 });

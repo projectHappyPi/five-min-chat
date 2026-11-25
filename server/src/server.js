@@ -18,7 +18,7 @@ const { Server } = require('socket.io');
 const QRCode = require('qrcode');
 const nick = require('./nickname');
 const { createStore } = require('./store');
-const { createIdentity, IdentityError, manAge, maskName } = require('./identity');
+const { kakao, createIdentity, IdentityError, manAge, maskName } = require('./identity');
 
 const DEFAULT_SETTINGS = {
   freeSeconds: 300, // 무료 대화 시간
@@ -44,6 +44,22 @@ const DEFAULT_REASONS = [
   { id: 'r4', text: '기타 (직접 입력)', retry: false, active: true, custom: true, order: 4 },
 ];
 
+// QR 위에 보이는 내 이모지: 누구나 쓸 수 있는 기본 20개
+const FREE_EMOJIS = ['😀', '😎', '🥰', '😍', '🤩', '😇', '🙂', '😜', '🤗', '🥳', '😺', '🐶', '🦊', '🐻', '🐼', '🐰', '🐯', '🌸', '🌈', '🔥'];
+// 재화로 사는 이모지 (관리자 화면에서 추가·가격 변경·판매 중지)
+const DEFAULT_SHOP = [
+  { emoji: '👑', price: 30 },
+  { emoji: '💎', price: 30 },
+  { emoji: '🦄', price: 20 },
+  { emoji: '🌟', price: 15 },
+  { emoji: '🍀', price: 15 },
+  { emoji: '🎧', price: 15 },
+  { emoji: '🐳', price: 20 },
+  { emoji: '🪐', price: 25 },
+];
+// 이모지 한 개(국기·피부색·합성 이모지 포함)인지 확인
+const isEmoji = (v) => typeof v === 'string' && v.length <= 16 && [...v].length <= 8 && /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|\u200d|\ufe0f)+$/u.test(v) && /\p{Extended_Pictographic}|\p{Regional_Indicator}/u.test(v);
+
 const REPORT_REASONS = ['욕설·비하', '성적인 내용', '사기·광고', '불쾌한 대화', '기타'];
 
 const ANDROID_PACKAGE = process.env.ANDROID_PACKAGE || 'com.happypi.five_min_chat';
@@ -52,6 +68,19 @@ const APP_SCHEME = 'fivechat';
 const newId = (bytes = 9) => crypto.randomBytes(bytes).toString('base64url');
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('base64url');
 const now = () => Date.now();
+
+// 비밀번호 단방향 암호화 (scrypt, 무작위 솔트). 형식: scrypt$솔트$해시
+function hashPassword(pw) {
+  const salt = crypto.randomBytes(16);
+  return `scrypt$${salt.toString('base64url')}$${crypto.scryptSync(String(pw), salt, 32).toString('base64url')}`;
+}
+function verifyPassword(pw, stored) {
+  const [alg, salt, hash] = String(stored).split('$');
+  if (alg !== 'scrypt' || !salt || !hash) return false;
+  const a = crypto.scryptSync(String(pw), Buffer.from(salt, 'base64url'), 32);
+  const b = Buffer.from(hash, 'base64url');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 function lanAddress() {
   const all = [];
@@ -73,15 +102,24 @@ async function start(opts = {}) {
   const ADMIN_PASSWORD = opts.adminPassword || process.env.ADMIN_PASSWORD || 'admin1234';
   const APP_SECRET = opts.appSecret || process.env.APP_SECRET || 'dev-secret-change-me';
   const PUBLIC_URL = (opts.publicUrl || process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://${lanAddress()}:${PORT}`).replace(/\/$/, '');
-  const identity = createIdentity(opts.identityProvider || process.env.IDENTITY_PROVIDER || 'mock', { portoneSecret: process.env.PORTONE_API_SECRET });
+  const identityKind = opts.identityProvider || process.env.IDENTITY_PROVIDER || 'mock';
+  const identity = createIdentity(identityKind, { portoneSecret: process.env.PORTONE_API_SECRET });
+  // 카카오 로그인 가입. KAKAO_APP_ID(카카오 디벨로퍼스 앱 ID)가 있어야 실제 카카오 토큰을 확인한다
+  const kakaoIdentity = kakao({ appId: opts.kakaoAppId || process.env.KAKAO_APP_ID, allowMock: identityKind === 'mock' });
 
   if (process.env.NODE_ENV === 'production' && (ADMIN_PASSWORD === 'admin1234' || APP_SECRET === 'dev-secret-change-me')) {
     throw new Error('배포 환경에서는 ADMIN_PASSWORD 와 APP_SECRET 을 꼭 바꿔야 해요');
   }
 
+  // 저장 데이터 암호화 키. DB에는 저장하지 않는다 (지금은 테스트 키 testkey)
+  const CRYPTO_KEY = opts.cryptoKey || process.env.DB_CRYPTO_KEY || 'testkey';
+  if (process.env.NODE_ENV === 'production' && CRYPTO_KEY === 'testkey') {
+    console.warn('주의: DB 암호화 키가 테스트 키(testkey)예요. 정식 운영 전에 DB_CRYPTO_KEY 를 긴 무작위 값으로 바꾸세요');
+  }
   const store = createStore({
     databaseUrl: opts.databaseUrl ?? process.env.DATABASE_URL,
     dataFile: opts.dataFile || process.env.DATA_FILE || path.join(__dirname, '..', 'data.json'),
+    cryptoKey: CRYPTO_KEY,
   });
   const db = await store.init();
   db.settings = { ...DEFAULT_SETTINGS, ...db.settings };
@@ -91,6 +129,13 @@ async function start(opts = {}) {
     db.reasons.forEach((r) => store.put('reasons', r));
   }
   store.putSettings(db.settings);
+  if (!Object.keys(db.emojiShop).length) {
+    DEFAULT_SHOP.forEach((e, i) => {
+      const item = { id: newId(6), emoji: e.emoji, price: e.price, active: true, order: i + 1, createdAt: now() };
+      db.emojiShop[item.id] = item;
+      store.put('emojiShop', item);
+    });
+  }
 
   const S = () => db.settings;
   const ciHashOf = (ci) => crypto.createHmac('sha256', APP_SECRET).update(String(ci)).digest('base64url');
@@ -126,8 +171,30 @@ async function start(opts = {}) {
 
   function publicUser(u) {
     ensureNickname(u);
-    return { id: u.id, nickname: u.nickname, coins: u.coins, gender: u.gender, age: manAge(u.birth), birthYear: +u.birth.slice(0, 4), lang: u.lang || null };
+    return { id: u.id, nickname: u.nickname, coins: u.coins, gender: u.gender, age: manAge(u.birth), birthYear: +u.birth.slice(0, 4), lang: u.lang || null, emoji: emojiOf(u) };
   }
+
+  // ---------------------------------------------------------------- 이모지
+  const emojiOf = (u) => (u && u.emoji) || '🙂';
+  const shopItems = () => Object.values(db.emojiShop).sort((x, y) => (x.order || 0) - (y.order || 0) || x.createdAt - y.createdAt);
+  const canUseEmoji = (u, e) => FREE_EMOJIS.includes(e) || (u.ownedEmojis || []).includes(e);
+  function emojiCatalog(u) {
+    const owned = u.ownedEmojis || [];
+    return {
+      current: emojiOf(u),
+      coins: u.coins,
+      free: FREE_EMOJIS,
+      shop: shopItems()
+        .filter((i) => i.active || owned.includes(i.emoji))
+        .map((i) => ({ id: i.id, emoji: i.emoji, price: i.price, owned: owned.includes(i.emoji), onSale: !!i.active })),
+      requests: Object.values(db.emojiRequests)
+        .filter((r) => r.userId === u.id)
+        .sort((x, y) => y.createdAt - x.createdAt)
+        .slice(0, 20)
+        .map((r) => ({ id: r.id, emoji: r.emoji, note: r.note, status: r.status, answer: r.answer || null, createdAt: r.createdAt })),
+    };
+  }
+  const pushRoomsOf = (u) => Object.values(db.rooms).forEach((r) => (r.a === u.id || r.b === u.id) && pushRoom(r));
 
   // 대화방에서 고를 수 있는 언어 (앱의 번역 엔진 ML Kit 코드와 같다)
   const LANGS = ['ko', 'en', 'ja', 'zh', 'vi', 'th', 'id', 'es', 'fr', 'de', 'ru', 'pt'];
@@ -238,6 +305,7 @@ async function start(opts = {}) {
     return {
       id: room.id,
       partnerNickname: room.a === uid ? room.nickB : room.nickA,
+      partnerEmoji: emojiOf(db.users[room.a === uid ? room.b : room.a]),
       myLang: (room.lang && room.lang[uid]) || null,
       partnerLang: (room.lang && room.lang[room.a === uid ? room.b : room.a]) || null,
       via: room.via,
@@ -356,6 +424,21 @@ async function start(opts = {}) {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '50kb' }));
 
+  // 기본 보안 헤더: 다른 사이트에 끼워 넣기 금지, 파일 형식 추측 금지, 외부 스크립트 금지, HTTPS 강제
+  app.use((req, res, next) => {
+    res.set({
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer',
+      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+      'Content-Security-Policy':
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+    });
+    if (req.secure) res.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    if (req.path.startsWith('/admin') || req.path.startsWith('/api')) res.set('Cache-Control', 'no-store');
+    next();
+  });
+
   // 아주 단순한 요청 제한 (IP당 분당 120회)
   const hits = new Map();
   app.use('/api', (req, res, next) => {
@@ -390,7 +473,7 @@ async function start(opts = {}) {
     } catch (e) {
       dbOk = false;
     }
-    res.status(dbOk ? 200 : 503).json({ ok: dbOk, publicUrl: PUBLIC_URL, store: store.kind, identity: identity.name });
+    res.status(dbOk ? 200 : 503).json({ ok: dbOk, store: store.kind, encryption: store.encryption });
   });
 
   // 1단계: 기기 인증. 앱을 처음 켤 때 이 기기 전용 비밀 토큰을 받아 보안 저장소에 둔다.
@@ -429,7 +512,7 @@ async function start(opts = {}) {
     if (!v || v.deviceId !== device.id || v.expiresAt < now()) return bad(res, 400, 'verification', '인증 시간이 지났어요. 다시 시도해 주세요');
     let result;
     try {
-      result = await identity.verify(vid, req.body);
+      result = req.body && req.body.kakao ? await kakaoIdentity.verify(req.body) : await identity.verify(vid, req.body);
     } catch (e) {
       if (e instanceof IdentityError) return bad(res, 400, e.code, e.message);
       throw e;
@@ -452,7 +535,7 @@ async function start(opts = {}) {
       const token = issueSession(user, device);
       return res.json({ ok: true, status: 'login', token, user: publicUser(user) });
     }
-    v.pending = { ciHash, birth: result.birth, gender: result.gender, nameMasked: maskName(result.name) };
+    v.pending = { ciHash, birth: result.birth, gender: result.gender, nameMasked: maskName(result.name), provider: result.provider || identity.name };
     res.json({ ok: true, status: 'signup', verificationId: vid, profile: { birthYear: +result.birth.slice(0, 4), age, gender: result.gender } });
   });
 
@@ -473,6 +556,7 @@ async function start(opts = {}) {
       birth: p.birth,
       gender: p.gender,
       nameMasked: p.nameMasked,
+      provider: p.provider,
       coins: S().startCoins,
       createdAt: now(),
       agreedAt: now(),
@@ -526,14 +610,36 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
 
   // ---------------------------------------------------------------- 관리자
 
+  // 관리자 비밀번호: ADMIN_PASSWORD_HASH(scrypt 단방향 해시)가 있으면 그걸로만 확인한다.
+  // 만드는 법: node src/hash-password.js '비밀번호'
+  const ADMIN_HASH = process.env.ADMIN_PASSWORD_HASH || hashPassword(ADMIN_PASSWORD);
+  const adminFails = new Map(); // ip -> { n, first, until }
+  const adminOk = new Map(); // sha(인증 헤더) -> 만료 시각
   function adminAuth(req, res, next) {
+    const ip = req.ip;
+    const f = adminFails.get(ip);
+    if (f && f.until > now()) {
+      return res.status(429).send(`로그인 실패가 많아 ${Math.ceil((f.until - now()) / 60e3)}분 동안 잠겼어요`);
+    }
     const [type, b64] = (req.headers.authorization || '').split(' ');
     if (type === 'Basic' && b64) {
       const [u, ...rest] = Buffer.from(b64, 'base64').toString().split(':');
-      const p = rest.join(':');
-      const a = Buffer.from(sha(p));
-      const e = Buffer.from(sha(ADMIN_PASSWORD));
-      if (u === 'admin' && crypto.timingSafeEqual(a, e)) return next();
+      // scrypt 는 일부러 느리므로, 맞은 로그인은 10분 동안 기억해 화면 이동마다 다시 계산하지 않는다
+      const key = sha(b64);
+      if (adminOk.get(key) > now()) return next();
+      if (u === 'admin' && verifyPassword(rest.join(':'), ADMIN_HASH)) {
+        adminFails.delete(ip);
+        adminOk.set(key, now() + 10 * 60e3);
+        return next();
+      }
+      // 틀리면 세고, 15분 안에 5번 틀리면 15분 잠근다
+      const g = f && f.first > now() - 15 * 60e3 ? f : { n: 0, first: now(), until: 0 };
+      g.n += 1;
+      if (g.n >= 5) {
+        g.until = now() + 15 * 60e3;
+        store.log({ at: now(), admin: '-', action: 'admin_login_failed', target: ip, detail: { locked: true } });
+      }
+      adminFails.set(ip, g);
     }
     res.set('WWW-Authenticate', 'Basic realm="five-min-chat admin", charset="UTF-8"').status(401).send('관리자 로그인이 필요해요');
   }
@@ -548,6 +654,7 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
       id: u.id,
       nickname: u.nickname,
       nameMasked: u.nameMasked,
+      provider: u.provider === 'kakao' ? '카카오' : '간편인증',
       gender: u.gender,
       age: manAge(u.birth),
       birthYear: +u.birth.slice(0, 4),
@@ -589,7 +696,9 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
     res.json({
       publicUrl: PUBLIC_URL,
       store: store.kind,
+      encryption: store.encryption,
       identity: identity.name,
+      kakao: !!(opts.kakaoAppId || process.env.KAKAO_APP_ID),
       users: Object.keys(db.users).length,
       newUsersToday: Object.values(db.users).filter((u) => u.createdAt > day).length,
       liveRooms: rooms.filter((r) => ['live', 'extended'].includes(roomState(r).status)).length,
@@ -597,6 +706,7 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
       todayMessages,
       openReports: Object.values(db.reports).filter((r) => r.status === 'open').length,
       activeBlacklist: Object.values(db.blacklist).filter((b) => !b.releasedAt && b.expiresAt > now()).length,
+      pendingEmojiRequests: Object.values(db.emojiRequests).filter((r) => r.status === 'pending').length,
       settings: S(),
     });
   });
@@ -789,6 +899,90 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
 
   adminRouter.get('/api/logs', async (req, res) => res.json({ logs: await store.logs(300) }));
 
+  // ---- 이모지: 사용자 신청 검토, 상점(재화 이모지) 관리
+  adminRouter.get('/api/emoji', (req, res) => {
+    const requests = Object.values(db.emojiRequests)
+      .sort((x, y) => (x.status === 'pending' ? 0 : 1) - (y.status === 'pending' ? 0 : 1) || y.createdAt - x.createdAt)
+      .slice(0, 300)
+      .map((r) => ({ ...r, nickname: (db.users[r.userId] && db.users[r.userId].nickname) || r.nickname }));
+    const owners = {};
+    for (const u of Object.values(db.users)) for (const e of u.ownedEmojis || []) owners[e] = (owners[e] || 0) + 1;
+    res.json({
+      free: FREE_EMOJIS,
+      shop: shopItems().map((i) => ({ ...i, owners: owners[i.emoji] || 0 })),
+      requests,
+      pending: requests.filter((r) => r.status === 'pending').length,
+    });
+  });
+
+  adminRouter.post('/api/emoji/shop', (req, res) => {
+    const b = req.body || {};
+    const emoji = String(b.emoji || '').trim();
+    const price = Math.round(Number(b.price));
+    if (!isEmoji(emoji)) return bad(res, 400, 'emoji', '이모지 한 개를 넣어 주세요');
+    if (!(price >= 0 && price <= 100000)) return bad(res, 400, 'price', '가격을 확인해 주세요');
+    if (FREE_EMOJIS.includes(emoji) || shopItems().some((i) => i.emoji === emoji)) return bad(res, 409, 'exists', '이미 있는 이모지예요');
+    const item = { id: newId(6), emoji, price, active: true, order: shopItems().length + 1, createdAt: now() };
+    db.emojiShop[item.id] = item;
+    store.put('emojiShop', item);
+    audit('emoji_add', item.id, { emoji, price });
+    res.json({ ok: true, item });
+  });
+
+  adminRouter.post('/api/emoji/shop/:id', (req, res) => {
+    const item = db.emojiShop[req.params.id];
+    if (!item) return bad(res, 404, 'not_found', '없는 이모지예요');
+    const b = req.body || {};
+    if (b.price !== undefined) {
+      const price = Math.round(Number(b.price));
+      if (!(price >= 0 && price <= 100000)) return bad(res, 400, 'price', '가격을 확인해 주세요');
+      item.price = price;
+    }
+    if (b.active !== undefined) item.active = !!b.active;
+    store.put('emojiShop', item);
+    audit('emoji_edit', item.id, { emoji: item.emoji, price: item.price, active: item.active });
+    res.json({ ok: true, item });
+  });
+
+  // 신청 처리: 승인하면 상점에 바로 올라가고(가격 지정), 신청자에게 그 이모지를 선물할 수 있다
+  adminRouter.post('/api/emoji/requests/:id', (req, res) => {
+    const r = db.emojiRequests[req.params.id];
+    if (!r) return bad(res, 404, 'not_found', '없는 신청이에요');
+    const b = req.body || {};
+    const answer = String(b.answer || '').trim().slice(0, 200);
+    if (b.action === 'approve') {
+      const emoji = String(b.emoji || r.emoji || '').trim();
+      const price = Math.round(Number(b.price));
+      if (!isEmoji(emoji)) return bad(res, 400, 'emoji', '상점에 올릴 이모지를 넣어 주세요');
+      if (!(price >= 0 && price <= 100000)) return bad(res, 400, 'price', '가격을 확인해 주세요');
+      let item = shopItems().find((i) => i.emoji === emoji);
+      if (!FREE_EMOJIS.includes(emoji)) {
+        if (!item) {
+          item = { id: newId(6), emoji, price, active: true, order: shopItems().length + 1, createdAt: now(), fromRequest: r.id };
+          db.emojiShop[item.id] = item;
+        } else {
+          Object.assign(item, { price, active: true });
+        }
+        store.put('emojiShop', item);
+      }
+      const u = db.users[r.userId];
+      if (b.gift && u && !FREE_EMOJIS.includes(emoji)) {
+        u.ownedEmojis = u.ownedEmojis || [];
+        if (!u.ownedEmojis.includes(emoji)) u.ownedEmojis.push(emoji);
+        saveUser(u);
+        pushMe(u);
+      }
+      Object.assign(r, { status: 'approved', emoji, answer: answer || (b.gift ? '신청하신 이모지를 선물로 드렸어요' : '상점에 추가했어요'), doneAt: now() });
+    } else if (b.action === 'reject') {
+      Object.assign(r, { status: 'rejected', answer: answer || '이번에는 추가하기 어려워요', doneAt: now() });
+    } else {
+      return bad(res, 400, 'action', '처리 방법을 골라 주세요');
+    }
+    store.put('emojiRequests', r);
+    audit('emoji_request_' + r.status, r.id, { emoji: r.emoji, answer: r.answer });
+    res.json({ ok: true, request: r });
+  });
+
   app.use('/admin', adminRouter);
   app.get('/admin.html', (req, res) => res.redirect('/admin'));
   app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.html' }));
@@ -820,6 +1014,11 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
     self: '내 QR은 내가 찍을 수 없어요',
     not_live: '대화 시간이 끝났어요',
     bad_lang: '지원하지 않는 언어예요',
+    too_fast: '메시지를 너무 빨리 보내고 있어요. 잠시 뒤 보내 주세요',
+    emoji_locked: '아직 쓸 수 없는 이모지예요',
+    emoji_bad: '이모지 한 개만 넣어 주세요',
+    emoji_note: '원하는 이모지나 설명을 적어 주세요',
+    emoji_many: '검토 중인 신청이 5개예요. 결과가 나온 뒤 다시 신청해 주세요',
     empty: '메시지를 입력해 주세요',
     coins: '재화가 부족해요',
     cannot_extend: '지금은 연장을 요청할 수 없어요',
@@ -849,6 +1048,51 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
     socket.join(`u:${uid}`);
 
     socket.on('me', (_, ack) => ok(ack, { user: publicUser(me()), settings: S(), publicUrl: PUBLIC_URL, reportReasons: REPORT_REASONS }));
+
+    socket.on('emoji:list', (_, ack) => ok(ack, emojiCatalog(me())));
+
+    // 내 이모지 바꾸기 (기본 이모지 또는 산 이모지)
+    socket.on('emoji:set', ({ emoji } = {}, ack) => {
+      const u = me();
+      if (!isEmoji(emoji) || !canUseEmoji(u, emoji)) return fail(ack, 'emoji_locked');
+      u.emoji = emoji;
+      saveUser(u);
+      pushMe(u);
+      pushRoomsOf(u);
+      ok(ack, emojiCatalog(u));
+    });
+
+    // 재화로 이모지 사기. 산 이모지는 바로 내 이모지로 바뀐다
+    socket.on('emoji:buy', ({ id } = {}, ack) => {
+      const u = me();
+      const item = db.emojiShop[String(id || '')];
+      if (!item || !item.active) return fail(ack, 'not_found');
+      u.ownedEmojis = u.ownedEmojis || [];
+      if (!u.ownedEmojis.includes(item.emoji)) {
+        if (!spend(u, item.price)) return fail(ack, 'coins');
+        u.ownedEmojis.push(item.emoji);
+      }
+      u.emoji = item.emoji;
+      saveUser(u);
+      pushMe(u);
+      pushRoomsOf(u);
+      ok(ack, emojiCatalog(u));
+    });
+
+    // 관리자에게 이모지 신청 (원하는 이모지 + 설명)
+    socket.on('emoji:request', ({ emoji, note } = {}, ack) => {
+      const u = me();
+      const e = emoji ? String(emoji).trim() : '';
+      const n = String(note || '').trim().slice(0, 200);
+      if (e && !isEmoji(e)) return fail(ack, 'emoji_bad');
+      if (!e && n.length < 2) return fail(ack, 'emoji_note');
+      const pending = Object.values(db.emojiRequests).filter((r) => r.userId === u.id && r.status === 'pending').length;
+      if (pending >= 5) return fail(ack, 'emoji_many');
+      const r = { id: newId(6), userId: u.id, nickname: u.nickname, emoji: e || null, note: n, status: 'pending', createdAt: now() };
+      db.emojiRequests[r.id] = r;
+      store.put('emojiRequests', r);
+      ok(ack, emojiCatalog(u));
+    });
 
     socket.on('nick:reroll', (_, ack) => {
       const u = me();
@@ -970,6 +1214,11 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
       if (st !== 'live' && st !== 'extended') return fail(ack, 'not_live');
       const t = String(text || '').trim().slice(0, 500);
       if (!t) return fail(ack, 'empty');
+      // 도배 막기: 10초에 20개까지
+      const tnow = now();
+      socket.data.sent = (socket.data.sent || []).filter((x) => x > tnow - 10e3);
+      if (socket.data.sent.length >= 20) return fail(ack, 'too_fast');
+      socket.data.sent.push(tnow);
       const m = addMessage(room, uid, t, false, { lang: (room.lang && room.lang[uid]) || null, tr: cleanTr(tr) });
       for (const u of [room.a, room.b]) io.to(`u:${u}`).emit('room:update', summary(room, u));
       ok(ack, { id: m.id });
@@ -1158,4 +1407,4 @@ setTimeout(function(){location.href=document.getElementById('open').href;},300);
   return { server, io, store, close, publicUrl: PUBLIC_URL, port: server.address().port, adminDefault: ADMIN_PASSWORD === 'admin1234', identity: identity.name };
 }
 
-module.exports = { start, DEFAULT_SETTINGS };
+module.exports = { start, DEFAULT_SETTINGS, hashPassword, verifyPassword };

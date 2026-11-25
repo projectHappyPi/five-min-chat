@@ -301,6 +301,76 @@ const step = (name) => {
   assert.ok(join.includes('intent://join/abc') && join.includes('com.happypi.five_min_chat'));
   step('QR 링크 페이지가 앱 열기 링크 제공');
 
+  // ---------------- 카카오 가입 (테스트 서버는 카카오 키 없이 테스트 모드)
+  {
+    const kd = await newDevice('Galaxy S24');
+    const kh = { 'X-Device-Token': kd };
+    let ks = await api('POST', '/api/identity/start', {}, kh);
+    const noGender = await api('POST', '/api/identity/complete', { verificationId: ks.verificationId, kakao: { mock: { kakaoId: '4000123', birthyear: '1996', birthday: '0520' } } }, kh);
+    assert.strictEqual(noGender.error, 'kakao_scope');
+    const young = String(new Date().getFullYear() - 18);
+    const kidK = await api('POST', '/api/identity/complete', { verificationId: ks.verificationId, kakao: { mock: { kakaoId: '4000999', birthyear: young, gender: 'male' } } }, kh);
+    assert.strictEqual(kidK.error, 'underage');
+    ks = await api('POST', '/api/identity/start', {}, kh);
+    const realNoKey = await api('POST', '/api/identity/complete', { verificationId: ks.verificationId, kakao: { accessToken: 'abc' } }, kh);
+    assert.strictEqual(realNoKey.error, 'config');
+    ks = await api('POST', '/api/identity/start', {}, kh);
+    const kdone = await api('POST', '/api/identity/complete', { verificationId: ks.verificationId, kakao: { mock: { kakaoId: '4000123', birthyear: '1996', birthday: '0520', gender: 'female', nickname: '카톡이' } } }, kh);
+    assert.strictEqual(kdone.status, 'signup');
+    assert.deepStrictEqual([kdone.profile.gender, kdone.profile.birthYear], ['F', 1996]);
+    const ksu = await api('POST', '/api/signup', { verificationId: ks.verificationId, agreeTerms: true, agreePrivacy: true }, kh);
+    assert.ok(ksu.token && ksu.user.gender === 'F');
+    const kd2 = await newDevice('Galaxy S25');
+    const kh2 = { 'X-Device-Token': kd2 };
+    const ks2 = await api('POST', '/api/identity/start', {}, kh2);
+    const again = await api('POST', '/api/identity/complete', { verificationId: ks2.verificationId, kakao: { mock: { kakaoId: '4000123', birthyear: '1996', birthday: '0520', gender: 'female' } } }, kh2);
+    assert.strictEqual(again.status, 'login');
+    const users = await admin('GET', '/api/users');
+    assert.ok(users.users.find((u) => u.id === ksu.user.id).provider === '카카오');
+    step('카카오 가입: 출생연도·생일·성별 자동 입력, 성별 미동의·미성년자 거부, 같은 카카오 계정은 로그인');
+  }
+
+  // ---------------- 이모지
+  {
+    let c = await A.call('emoji:list');
+    assert.strictEqual(c.current, '🙂');
+    assert.strictEqual(c.free.length, 20);
+    assert.ok((await A.call('emoji:set', { emoji: '😎' })).ok);
+    assert.strictEqual((await A.call('emoji:set', { emoji: '👑' })).error, 'emoji_locked');
+    assert.strictEqual((await A.call('emoji:set', { emoji: 'abc' })).error, 'emoji_locked');
+    const crown = c.shop.find((i) => i.emoji === '👑');
+    const coins0 = (await A.call('me')).user.coins;
+    c = await A.call('emoji:buy', { id: crown.id });
+    assert.ok(c.ok && c.current === '👑' && c.shop.find((i) => i.emoji === '👑').owned);
+    assert.strictEqual((await A.call('me')).user.coins, coins0 - crown.price);
+    await A.call('emoji:set', { emoji: '😎' });
+    c = await A.call('emoji:buy', { id: crown.id }); // 이미 산 건 다시 돈을 내지 않는다
+    assert.strictEqual((await A.call('me')).user.coins, coins0 - crown.price);
+    const bRooms = (await K.call('rooms:list')).rooms;
+    assert.ok(bRooms.some((r) => r.partnerEmoji === '👑'));
+    step('기본 이모지 20개, 재화로 산 이모지만 사용 가능, 상대 대화 목록에 내 이모지 표시');
+
+    assert.strictEqual((await A.call('emoji:request', { emoji: 'ㅋ' })).error, 'emoji_bad');
+    assert.ok((await A.call('emoji:request', { note: '왕관 쓴 고양이 이모지 갖고 싶어요' })).ok);
+    assert.ok((await A.call('emoji:request', { emoji: '🐙', note: '문어' })).ok);
+    let e = await admin('GET', '/api/emoji');
+    assert.strictEqual(e.pending, 2);
+    const reqCat = e.requests.find((r) => !r.emoji);
+    const reqOcto = e.requests.find((r) => r.emoji === '🐙');
+    assert.ok((await admin('POST', `/api/emoji/requests/${reqOcto.id}`, { action: 'approve', price: 25, gift: true })).ok);
+    assert.ok((await admin('POST', `/api/emoji/requests/${reqCat.id}`, { action: 'reject', answer: '비슷한 이모지가 없어요' })).ok);
+    c = await A.call('emoji:list');
+    assert.ok(c.shop.find((i) => i.emoji === '🐙' && i.owned && i.price === 25));
+    assert.deepStrictEqual(c.requests.map((r) => r.status).sort(), ['approved', 'rejected']);
+    assert.ok((await A.call('emoji:set', { emoji: '🐙' })).ok);
+    const octo = (await admin('GET', '/api/emoji')).shop.find((i) => i.emoji === '🐙');
+    await admin('POST', `/api/emoji/shop/${octo.id}`, { active: false });
+    assert.ok(!(await K.call('emoji:list')).shop.some((i) => i.emoji === '🐙'));
+    assert.ok((await A.call('emoji:list')).shop.some((i) => i.emoji === '🐙' && i.owned));
+    assert.strictEqual((await admin('POST', '/api/emoji/shop', { emoji: '🙂', price: 5 })).error, 'exists');
+    step('이모지 신청 → 관리자 승인(상점 추가·선물)·반려, 판매 중지해도 산 사람은 계속 사용');
+  }
+
   // ---------------- 재시작 후에도 데이터 유지
   for (const c of [A, B, C, K, T]) c.close();
   await srv.close();
@@ -312,6 +382,36 @@ const step = (name) => {
   const rs = await admin('GET', '/api/settings');
   assert.strictEqual(rs.settings.freeSeconds, 2);
   step('서버를 다시 켜도 회원·대화·설정·자동로그인 유지');
+
+  // ---------------- 암호화 저장
+  if (DB_URL) {
+    const { Pool } = require('pg');
+    const pool = new Pool({ connectionString: DB_URL });
+    const raw = await pool.query('select data, enc from messages limit 5');
+    assert.ok(raw.rows.length && raw.rows.every((r) => r.data === null && r.enc));
+    const rawUsers = await pool.query("select data, enc from kv where kind = 'users'");
+    assert.ok(rawUsers.rows.every((r) => r.data === null && r.enc));
+    const plain = await pool.query("select pgp_sym_decrypt(enc, 'testkey')::jsonb as d from messages where enc is not null");
+    assert.ok(plain.rows.some((r) => r.d.text === '연장됐네요'));
+    await assert.rejects(pool.query("select pgp_sym_decrypt(enc, 'wrongkey') from messages where enc is not null limit 1"));
+    await pool.end();
+  } else {
+    const rawFile = fs.readFileSync(dataFile, 'utf8');
+    assert.ok(rawFile.includes('aes-256-gcm') && !rawFile.includes('연장됐네요') && !rawFile.includes('카톡이'));
+  }
+  await srv.close();
+  await assert.rejects(start({ port: 0, databaseUrl: DB_URL, dataFile, adminPassword: 'test', appSecret: 'test-secret', cryptoKey: 'wrongkey' }), /키/);
+  srv = await boot();
+  step('대화·회원 정보는 암호화 저장(키 testkey 없이는 조회 불가), 다른 키로는 서버가 켜지지 않음');
+
+  // ---------------- 보안 헤더, 관리자 로그인 잠금
+  const home = await fetch(BASE + '/');
+  assert.strictEqual(home.headers.get('x-frame-options'), 'DENY');
+  assert.ok(home.headers.get('content-security-policy').includes("frame-ancestors 'none'"));
+  const wrong = { Authorization: 'Basic ' + Buffer.from('admin:nope').toString('base64') };
+  for (let i = 0; i < 5; i++) assert.strictEqual((await fetch(BASE + '/admin/api/overview', { headers: wrong })).status, 401);
+  assert.strictEqual((await fetch(BASE + '/admin/api/overview', { headers: adminHeaders })).status, 429);
+  step('보안 헤더, 관리자 비밀번호 5번 틀리면 15분 잠금');
 
   await srv.close();
   console.log(`\n  모두 통과 (${passed}개)`);

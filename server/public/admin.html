@@ -71,7 +71,9 @@ const gender = (g) => (g === 'F' ? '여' : g === 'M' ? '남' : '-');
 const STATUS = { live: '진행 중', extended: '연장됨', pending: '응답 대기', ended: '종료', rejected: '거절됨', expired: '만료' };
 const ACTIONS = {
   view_chat: '대화 열람', blacklist_add: '블랙리스트 등록', blacklist_release: '블랙리스트 해제', blacklist_extend: '블랙리스트 연장',
-  blacklist_purge: '보관 기간 만료 폐기', coins: '재화 지급', settings: '설정 변경', reason_add: '거절 사유 추가', reason_edit: '거절 사유 수정', report: '신고 처리',
+  blacklist_purge: '보관 기간 만료 폐기', coins: '재화 지급',
+  emoji_add: '이모지 상점 추가', emoji_edit: '이모지 상점 수정', emoji_request_approved: '이모지 신청 승인', emoji_request_rejected: '이모지 신청 반려',
+  admin_login_failed: '관리자 로그인 실패', settings: '설정 변경', reason_add: '거절 사유 추가', reason_edit: '거절 사유 수정', report: '신고 처리',
 };
 const LABELS = {
   freeSeconds: '무료 대화 시간 (초)', qrSeconds: 'QR 유효 시간 (초)', extendWindowHours: '종료 후 연장 가능 (시간)', extendMinutes: '연장 시간 (분)',
@@ -95,7 +97,7 @@ const toast = (m) => { const t = $('toast'); t.textContent = m; t.hidden = false
 async function api(path, method = 'GET', body) {
   const r = await fetch('/admin/api' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) { toast(data.error || '실패했어요'); throw new Error(data.error); }
+  if (!r.ok) { toast(data.message || data.error || '실패했어요'); throw new Error(data.message || data.error); }
   return data;
 }
 function table(headers, rows) {
@@ -129,7 +131,7 @@ function ask(title, fields, onOk, okLabel = '확인') {
 const pages = {
   async dashboard() {
     const o = await api('/overview');
-    $('env').textContent = `서버 ${o.publicUrl} · 저장소 ${o.store === 'postgres' ? 'PostgreSQL' : '파일'} · 인증 ${o.identity === 'mock' ? '테스트 인증' : o.identity}`;
+    $('env').textContent = `서버 ${o.publicUrl} · 저장소 ${o.store === 'postgres' ? 'PostgreSQL' : '파일'} (암호화 ${o.encryption}) · 인증 ${o.identity === 'mock' ? '테스트 인증' : o.identity} · 카카오 ${o.kakao ? '연결됨' : '테스트 모드'}`;
     const c = (label, v, sub) => h('div', { class: 'card' }, h('span', { class: 'muted small' }, label), h('b', {}, v), sub ? h('span', { class: 'muted small' }, sub) : null);
     return [
       h('div', {}, h('h1', {}, '대시보드'), h('p', { class: 'muted lead' }, '최근 24시간 기준이에요.')),
@@ -138,7 +140,8 @@ const pages = {
         c('진행 중 대화', o.liveRooms, `오늘 연결 ${o.roomsToday}`),
         c('오늘 메시지', o.todayMessages),
         c('처리 안 된 신고', o.openReports),
-        c('블랙리스트', o.activeBlacklist)),
+        c('블랙리스트', o.activeBlacklist),
+        c('이모지 신청 대기', o.pendingEmojiRequests)),
     ];
   },
 
@@ -151,7 +154,7 @@ const pages = {
       h('div', { class: 'toolbar' }, search, h('button', { onclick: () => show('users', search.value) }, '검색')),
       users.length ? table(['닉네임', '이름', '성별', '나이', '재화', '기기', '가입', '최근 접속', '신고', '상태', ''],
         users.map((u) => h('tr', {},
-          h('td', {}, u.nickname), h('td', {}, u.nameMasked || '-'), h('td', {}, gender(u.gender)), h('td', {}, `만 ${u.age} (${u.birthYear})`),
+          h('td', {}, u.nickname), h('td', {}, `${u.nameMasked || '-'} · ${u.provider}`), h('td', {}, gender(u.gender)), h('td', {}, `만 ${u.age} (${u.birthYear})`),
           h('td', {}, u.coins), h('td', { class: 'small' }, u.device || '-'), h('td', {}, day(u.createdAt)), h('td', {}, fmt(u.lastSeenAt)),
           h('td', {}, u.reports ? h('span', { class: 'tag' }, u.reports) : '-'),
           h('td', {}, u.blocked ? h('span', { class: 'tag red' }, `차단 ~${day(u.blocked.until)}`) : '정상'),
@@ -242,6 +245,51 @@ const pages = {
     ];
   },
 
+  async emoji() {
+    const d = await api('/emoji');
+    const REQ = { pending: '검토 중', approved: '승인', rejected: '반려' };
+    const approve = (r) => ask(`${r.nickname}님 신청 승인`, [
+      { type: 'info', label: `신청 내용: ${r.emoji || '(이모지 없음)'} ${r.note || ''}` },
+      { id: 'emoji', label: '상점에 올릴 이모지 (한 개)', value: r.emoji || '' },
+      { id: 'price', label: '가격 (재화)', type: 'number', value: 20 },
+      { id: 'gift', label: '신청자에게 선물', type: 'select', value: 'yes', options: [['yes', '선물로 바로 지급'], ['no', '상점에만 추가']] },
+      { id: 'answer', label: '신청자에게 보낼 답변 (선택)', type: 'textarea' },
+    ], async (v) => {
+      await api(`/emoji/requests/${r.id}`, 'POST', { action: 'approve', emoji: v.emoji, price: Number(v.price), gift: v.gift === 'yes', answer: v.answer });
+      toast('승인했어요');
+      show('emoji');
+    }, '승인');
+    const reject = (r) => ask(`${r.nickname}님 신청 반려`, [{ id: 'answer', label: '반려 사유 (신청자에게 보여요)', type: 'textarea' }], async (v) => {
+      await api(`/emoji/requests/${r.id}`, 'POST', { action: 'reject', answer: v.answer });
+      toast('반려했어요');
+      show('emoji');
+    }, '반려');
+    const newEmoji = h('input', { type: 'text', placeholder: '이모지', maxlength: 16, style: 'width:90px', 'aria-label': '새 이모지' });
+    const newPrice = h('input', { type: 'text', inputmode: 'numeric', placeholder: '가격', value: '20', style: 'width:90px', 'aria-label': '가격' });
+    return [
+      h('div', {}, h('h1', {}, '이모지'), h('p', { class: 'muted lead' }, `QR 위에 보이는 이모지예요. 기본 ${d.free.length}개는 누구나 쓰고, 상점 이모지는 재화로 사요. 사용자가 보낸 신청을 승인하면 상점에 바로 올라가요.`)),
+      h('h2', {}, `사용자 신청 ${d.pending ? `· 대기 ${d.pending}` : ''}`),
+      d.requests.length ? table(['신청', '이모지', '설명', '신청자', '상태', '답변', ''],
+        d.requests.map((r) => h('tr', { class: r.status === 'pending' ? '' : 'off' },
+          h('td', {}, fmt(r.createdAt)), h('td', { style: 'font-size:26px' }, r.emoji || '-'), h('td', { class: 'small' }, r.note || '-'), h('td', {}, r.nickname),
+          h('td', {}, h('span', { class: r.status === 'pending' ? 'tag red' : 'tag gray' }, REQ[r.status])), h('td', { class: 'small' }, r.answer || '-'),
+          h('td', {}, r.status === 'pending' ? [h('button', { onclick: () => approve(r) }, '승인'), ' ', h('button', { onclick: () => reject(r) }, '반려')] : null)))) : empty('아직 신청이 없어요'),
+      h('h2', {}, '상점 (재화 이모지)'),
+      table(['이모지', '가격', '산 사람', '상태', ''],
+        d.shop.map((i) => h('tr', { class: i.active ? '' : 'off' },
+          h('td', { style: 'font-size:26px' }, i.emoji), h('td', {}, `${i.price} 재화`), h('td', {}, `${i.owners}명`),
+          h('td', {}, h('span', { class: 'tag' }, i.active ? '판매 중' : '판매 중지')),
+          h('td', {},
+            h('button', { onclick: () => ask(`${i.emoji} 가격 바꾸기`, [{ id: 'price', label: '가격 (재화)', type: 'number', value: i.price }], async (v) => { await api(`/emoji/shop/${i.id}`, 'POST', { price: Number(v.price) }); show('emoji'); }) }, '가격'), ' ',
+            h('button', { onclick: async () => { await api(`/emoji/shop/${i.id}`, 'POST', { active: !i.active }); show('emoji'); } }, i.active ? '판매 중지' : '다시 판매'))))),
+      h('div', { class: 'box' }, h('div', { class: 'inline' }, newEmoji, newPrice,
+        h('button', { class: 'primary', onclick: async () => { await api('/emoji/shop', 'POST', { emoji: newEmoji.value.trim(), price: Number(newPrice.value) }); toast('상점에 추가했어요'); show('emoji'); } }, '상점에 추가'),
+        h('span', { class: 'muted small' }, '이미 산 사람은 판매를 멈춰도 계속 쓸 수 있어요.'))),
+      h('h2', {}, '기본 이모지'),
+      h('div', { class: 'box' }, h('div', { class: 'inline', style: 'font-size:26px;gap:12px' }, d.free.join(' '))),
+    ];
+  },
+
   async logs() {
     const { logs } = await api('/logs');
     return [
@@ -296,7 +344,7 @@ function coins(u) {
 
 // ---------------------------------------------------------------- 메뉴
 
-const MENU = [['dashboard', '대시보드'], ['users', '회원'], ['rooms', '대화 조회'], ['reports', '신고'], ['blacklist', '블랙리스트'], ['settings', '설정·거절 사유'], ['logs', '접근 기록']];
+const MENU = [['dashboard', '대시보드'], ['users', '회원'], ['rooms', '대화 조회'], ['reports', '신고'], ['blacklist', '블랙리스트'], ['emoji', '이모지'], ['settings', '설정·거절 사유'], ['logs', '접근 기록']];
 let current = 'dashboard';
 
 function render(nodes) {
@@ -312,10 +360,11 @@ async function show(page, ...args) {
 }
 
 async function drawNav() {
-  let open = 0;
-  try { open = (await (await fetch('/admin/api/overview')).json()).openReports; } catch (_) {}
+  let o = {};
+  try { o = await (await fetch('/admin/api/overview')).json(); } catch (_) {}
+  const badge = { reports: o.openReports, emoji: o.pendingEmojiRequests };
   $('nav').replaceChildren(...MENU.map(([k, label]) => h('button', { 'aria-current': current === k ? 'page' : null, onclick: () => show(k) },
-    label, k === 'reports' && open ? h('span', { class: 'count' }, open) : null)));
+    label, badge[k] ? h('span', { class: 'count' }, badge[k]) : null)));
 }
 
 window.addEventListener('hashchange', () => { const p = location.hash.slice(1); if (p in pages && p !== current) show(p); });

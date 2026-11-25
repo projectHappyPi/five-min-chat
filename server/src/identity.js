@@ -73,6 +73,55 @@ function portone(apiSecret) {
   };
 }
 
+/*
+ * 카카오 로그인으로 가입
+ * - 앱이 카카오 SDK로 받은 액세스 토큰을 서버가 카카오 API로 다시 확인한다
+ *   (토큰이 우리 앱(KAKAO_APP_ID)에서 발급됐는지 확인 → 회원정보 조회)
+ * - 출생연도·생일·성별은 카카오 동의항목(비즈 앱 + 심사)이 켜져 있어야 받을 수 있다
+ * - 주의: 카카오 출생연도는 사용자가 직접 입력한 값이라 성인 인증으로는 약하다
+ * - 같은 사람 판단은 CI 대신 카카오 회원번호로 한다 (KAKAO:회원번호)
+ */
+function kakao({ appId, allowMock } = {}) {
+  async function kapi(path, token) {
+    const res = await fetch(`https://kapi.kakao.com${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new IdentityError('kakao', '카카오 로그인 정보를 확인하지 못했어요. 다시 시도해 주세요');
+    return res.json();
+  }
+
+  // 생일(MMDD)이 없으면 그해 12월 31일로 계산한다 (나이를 가장 어리게 잡아 미성년자 가입을 막는다)
+  function toProfile(id, birthyear, birthday, gender, nickname) {
+    const y = String(birthyear || '').replace(/\D/g, '');
+    const md = String(birthday || '').replace(/\D/g, '');
+    if (!/^\d{4}$/.test(y)) throw new IdentityError('kakao_scope', '카카오 계정의 출생연도 제공에 동의해야 가입할 수 있어요');
+    const birth = y + (/^\d{4}$/.test(md) ? md : '1231');
+    if (!validDate(birth)) throw new IdentityError('kakao_scope', '카카오 계정의 생일 정보를 확인해 주세요');
+    const g = gender === 'female' || gender === 'F' ? 'F' : gender === 'male' || gender === 'M' ? 'M' : null;
+    if (!g) throw new IdentityError('kakao_scope', '카카오 계정의 성별 제공에 동의해야 가입할 수 있어요');
+    return { ci: `KAKAO:${id}`, name: String(nickname || '카카오').slice(0, 20), birth, gender: g, provider: 'kakao' };
+  }
+
+  return {
+    name: 'kakao',
+    async verify(body) {
+      const k = (body && body.kakao) || {};
+      if (k.mock) {
+        if (!allowMock) throw new IdentityError('kakao', '테스트용 카카오 가입은 테스트 서버에서만 쓸 수 있어요');
+        const id = String(k.mock.kakaoId || '').replace(/\D/g, '');
+        if (!/^\d{3,20}$/.test(id)) throw new IdentityError('kakao', '카카오 회원번호(숫자)를 입력해 주세요');
+        return toProfile(id, k.mock.birthyear, k.mock.birthday, k.mock.gender, k.mock.nickname);
+      }
+      const token = String(k.accessToken || '');
+      if (!token) throw new IdentityError('kakao', '카카오 로그인 정보가 없어요');
+      if (!appId) throw new IdentityError('config', '서버에 카카오 로그인 설정(KAKAO_APP_ID)이 없어요');
+      const info = await kapi('/v1/user/access_token_info', token);
+      if (String(info.app_id) !== String(appId)) throw new IdentityError('kakao', '다른 앱에서 받은 카카오 로그인이에요');
+      const me = await kapi('/v2/user/me', token);
+      const a = me.kakao_account || {};
+      return toProfile(me.id, a.birthyear, a.birthday, a.gender, a.profile && a.profile.nickname);
+    },
+  };
+}
+
 function createIdentity(kind, opts = {}) {
   if (kind === 'portone') return portone(opts.portoneSecret);
   return mock;
@@ -96,4 +145,4 @@ function maskName(name) {
   return chars[0] + '*'.repeat(chars.length - 2) + chars[chars.length - 1];
 }
 
-module.exports = { createIdentity, IdentityError, manAge, maskName, validDate };
+module.exports = { kakao, createIdentity, IdentityError, manAge, maskName, validDate };

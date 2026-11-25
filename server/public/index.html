@@ -26,7 +26,10 @@
       <div class="coins"><span class="muted small">재화</span> <b id="coins">-</b></div>
     </div>
     <h2 id="qr-title" class="sr-only">내 QR</h2>
-    <div class="qr-wrap"><div id="qr" class="qr" aria-label="내 대화방 QR"></div></div>
+    <div class="qr-wrap">
+      <button id="my-emoji" class="my-emoji" type="button" aria-label="내 이모지 바꾸기">🙂</button>
+      <div id="qr" class="qr" aria-label="내 대화방 QR"></div>
+    </div>
     <div class="qr-meta">
       <span id="qr-clock" class="mono accent">--:--</span>
       <div class="bar"><div id="qr-bar"></div></div>
@@ -111,6 +114,21 @@
     </div>
   </div>
 </section>
+
+<dialog id="dlg-emoji">
+  <form method="dialog">
+    <h3>내 이모지</h3>
+    <p class="muted small">QR 위와 상대 대화 목록에 보여요.</p>
+    <div class="label">기본</div>
+    <div id="emoji-free" class="emoji-grid"></div>
+    <div class="label">상점 (재화)</div>
+    <div id="emoji-shop" class="emoji-grid"></div>
+    <div class="label">이모지 신청</div>
+    <div class="send-row"><input id="emoji-req-emoji" placeholder="이모지" maxlength="16" style="max-width:90px" aria-label="신청할 이모지"><input id="emoji-req-note" placeholder="원하는 이모지 설명" maxlength="200" aria-label="설명"><button type="button" id="emoji-req-send">신청</button></div>
+    <ul id="emoji-reqs" class="small muted"></ul>
+    <div class="row"><button value="close">닫기</button></div>
+  </form>
+</dialog>
 
 <dialog id="dlg-ext">
   <form method="dialog" id="ext-form">
