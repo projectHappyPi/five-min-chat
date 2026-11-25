@@ -70,6 +70,43 @@ PC 웹에서 쓴 정보와 다른 정보로 앱에서 인증해야 두 사람이
 서버는 `IDENTITY_PROVIDER=portone`, `PORTONE_API_SECRET` 만 넣으면 포트원 결과를 확인하도록 준비돼 있고,
 앱의 테스트 인증 화면 자리에 포트원 Flutter SDK 인증창을 붙이면 된다.
 
+### 카카오로 가입하기
+
+앱 키를 넣기 전에는 "카카오로 시작하기 (테스트)"로 동작한다 (카카오가 줄 정보를 직접 입력).
+실제 카카오 로그인으로 바꾸려면:
+
+1. [카카오 디벨로퍼스](https://developers.kakao.com)에서 앱을 만든다.
+2. 앱 > 플랫폼 > Android 등록
+   - 패키지명: `com.happypi.five_min_chat`
+   - 키 해시: `7uZjlfD1qMhACLPEakrNEuF6Heg=` (저장소의 테스트 서명 키 기준)
+3. 카카오 로그인 활성화, 동의항목에서 성별·출생연도·생일을 켠다 (비즈 앱 전환과 심사 필요).
+4. 네이티브 앱 키를 `config/kakao_native_app_key.txt` 에 넣고 푸시 → APK 자동 빌드.
+5. 앱 ID(숫자)를 Render 환경변수 `KAKAO_APP_ID` 에 넣는다 (서버가 토큰이 우리 앱 것인지 확인).
+
+주의: 카카오 출생연도는 사용자가 직접 입력한 값이라 성인 인증으로는 약하다.
+같은 사람 판단은 카카오 회원번호로 한다 (간편인증 CI 와는 다른 계정이 된다).
+
+## 보안·암호화
+
+| 대상 | 방식 |
+|---|---|
+| 대화 메시지, 회원·기기·대화방·신고·블랙리스트·이모지 신청 | DB 에 pgcrypto `pgp_sym_encrypt` (AES-256) 로 암호화 저장. 키 `DB_CRYPTO_KEY` (지금 `testkey`) |
+| 로그인·기기 토큰 | SHA-256 단방향 해시만 저장 |
+| CI·카카오 회원번호 | HMAC-SHA256 단방향 (APP_SECRET) |
+| 관리자 비밀번호 | scrypt 단방향 해시 (`node src/hash-password.js '비밀번호'` → `ADMIN_PASSWORD_HASH`) |
+| 로컬 data.json | 파일 전체 AES-256-GCM |
+
+키 없이 DB를 조회하면 암호문만 보인다. 키가 있으면:
+
+```sql
+select pgp_sym_decrypt(enc, 'testkey')::jsonb from messages order by created_at desc limit 20;
+select pgp_sym_decrypt(enc, 'testkey')::jsonb from kv where kind = 'users';
+```
+
+그 밖에: 보안 헤더(CSP·HSTS·X-Frame-Options), 관리자 비밀번호 5번 틀리면 15분 잠금, 대화 열람·차단 등 관리자 접근 기록, API 요청 제한, 메시지 도배 제한(10초 20개).
+
+키를 바꾸면 기존 데이터를 새 키로 다시 암호화해야 한다. 정식 운영 전 `testkey` 를 긴 무작위 값으로 바꿀 것.
+
 ## 개발
 
 ```bash
