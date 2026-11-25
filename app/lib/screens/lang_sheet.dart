@@ -81,7 +81,7 @@ Future<bool> ensurePacks(BuildContext context, List<String> codes) async {
       content: Text('$names 언어 팩이 필요해요 (언어당 약 30MB).\n한 번 받으면 인터넷 없이 폰 안에서 번역해요.'),
       actions: [
         TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('나중에')),
-        FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('받기')),
+        FilledButton(style: compactButton, onPressed: () => Navigator.pop(c, true), child: const Text('받기')),
       ],
     ),
   );

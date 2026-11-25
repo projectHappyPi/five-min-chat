@@ -10,6 +10,8 @@ pubspec.lock
 # flutter create 로 생성되는 플랫폼 파일 (AndroidManifest.xml 만 저장소에 둔다)
 android/*
 !android/app/
+!android/keystore/
+!android/build-extra.gradle.kts.txt
 android/app/*
 !android/app/src/
 android/app/src/*

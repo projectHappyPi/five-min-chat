@@ -34,6 +34,17 @@
                 <data android:scheme="fivechat" android:host="join" />
             </intent-filter>
         </activity>
+        <!-- 카카오 로그인 후 앱으로 돌아오는 주소: kakao{네이티브 앱 키}://oauth (키는 빌드할 때 넣는다) -->
+        <activity
+            android:name="com.kakao.sdk.flutter.auth.AuthCodeHandlerActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:host="oauth" android:scheme="kakao${kakaoNativeKey}" />
+            </intent-filter>
+        </activity>
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

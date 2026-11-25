@@ -151,6 +151,7 @@ class _ChatScreenState extends State<ChatScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(mainAxisSize: MainAxisSize.min, children: [
+                  if (room.partnerEmoji != null) Padding(padding: const EdgeInsets.only(right: 6), child: Text(room.partnerEmoji!, style: const TextStyle(fontSize: 20))),
                   Text(room.partnerNickname, style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: p.text)),
                   Icon(Icons.chevron_right, size: 18, color: p.muted),
                 ]),

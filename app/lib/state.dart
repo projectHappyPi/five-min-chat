@@ -31,8 +31,10 @@ class Me {
         gender = m['gender'] as String? ?? '',
         age = _int(m['age']),
         birthYear = _int(m['birthYear']),
-        lang = m['lang'] as String?;
+        lang = m['lang'] as String?,
+        emoji = m['emoji'] as String? ?? '🙂';
   final String id;
+  final String emoji; // QR 위에 보이는 내 이모지
   final String? lang; // 마지막으로 고른 대화 언어 (새 대화방 기본값)
   final String nickname;
   final int coins;
@@ -53,6 +55,44 @@ class SignupProfile {
   final int birthYear;
   final String gender;
   String get genderLabel => gender == 'F' ? '여성' : '남성';
+}
+
+/// 이모지 고르기·사기·신청 화면 데이터
+class EmojiCatalog {
+  EmojiCatalog.fromJson(Map<String, dynamic> m)
+      : current = m['current'] as String? ?? '🙂',
+        free = (m['free'] as List? ?? const []).cast<String>(),
+        shop = (m['shop'] as List? ?? const []).map((e) => ShopEmoji.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
+        requests = (m['requests'] as List? ?? const []).map((e) => EmojiRequest.fromJson(Map<String, dynamic>.from(e as Map))).toList();
+  final String current;
+  final List<String> free;
+  final List<ShopEmoji> shop;
+  final List<EmojiRequest> requests;
+}
+
+class ShopEmoji {
+  ShopEmoji.fromJson(Map<String, dynamic> m)
+      : id = m['id'] as String,
+        emoji = m['emoji'] as String,
+        price = _int(m['price']),
+        owned = m['owned'] == true;
+  final String id;
+  final String emoji;
+  final int price;
+  final bool owned;
+}
+
+class EmojiRequest {
+  EmojiRequest.fromJson(Map<String, dynamic> m)
+      : emoji = m['emoji'] as String?,
+        note = m['note'] as String? ?? '',
+        status = m['status'] as String? ?? 'pending',
+        answer = m['answer'] as String?;
+  final String? emoji;
+  final String note;
+  final String status; // pending, approved, rejected
+  final String? answer;
+  String get statusLabel => switch (status) { 'approved' => '승인', 'rejected' => '반려', _ => '검토 중' };
 }
 
 /// 앱이 지금 보여줘야 하는 단계
@@ -84,6 +124,7 @@ class Room {
   Room.fromJson(Map<String, dynamic> m)
       : id = m['id'] as String,
         partnerNickname = m['partnerNickname'] as String,
+        partnerEmoji = m['partnerEmoji'] as String?,
         myLang = m['myLang'] as String?,
         partnerLang = m['partnerLang'] as String?,
         via = m['via'] as String? ?? 'qr',
@@ -101,6 +142,7 @@ class Room {
         serverNow = _int(m['serverNow']);
   final String id;
   final String partnerNickname;
+  final String? partnerEmoji;
   final String? myLang; // 이 대화방에서 내가 쓰는 언어 (처음 들어올 때 고른다)
   final String? partnerLang;
   final String via;
@@ -348,7 +390,18 @@ class AppState extends ChangeNotifier {
   }
 
   /// 2단계: 간편인증 (테스트 버전은 이름·생년월일·성별·번호를 직접 입력)
-  Future<void> verifyIdentity({required String name, required String birth, required String gender, required String phone}) async {
+  Future<void> verifyIdentity({required String name, required String birth, required String gender, required String phone}) =>
+      _completeIdentity({
+        'mock': {'name': name, 'birth': birth, 'gender': gender, 'phone': phone},
+      });
+
+  /// 카카오로 가입·로그인. 카카오 SDK로 받은 토큰을 서버가 카카오에 다시 확인한다.
+  /// (앱에 카카오 키가 없는 테스트 빌드는 kakaoMock 으로 카카오 계정 정보를 흉내 낸다)
+  Future<void> verifyKakao({String? accessToken, Map<String, dynamic>? mock}) => _completeIdentity({
+        'kakao': {if (accessToken != null) 'accessToken': accessToken, if (mock != null) 'mock': mock},
+      });
+
+  Future<void> _completeIdentity(Map<String, dynamic> payload) async {
     var (code, st) = await _api('POST', '/api/identity/start');
     if (code == 401) {
       await _registerDevice(); // 서버 데이터가 초기화된 경우 기기 인증부터 다시
@@ -356,10 +409,7 @@ class AppState extends ChangeNotifier {
     }
     if (code != 200) throw ApiError('start', st['message']?.toString() ?? '인증을 시작하지 못했어요');
     final vid = st['verificationId'] as String;
-    final (c2, d) = await _api('POST', '/api/identity/complete', {
-      'verificationId': vid,
-      'mock': {'name': name, 'birth': birth, 'gender': gender, 'phone': phone},
-    });
+    final (c2, d) = await _api('POST', '/api/identity/complete', {'verificationId': vid, ...payload});
     if (c2 == 403 && d['error'] == 'blocked') {
       blockedInfo = d;
       _go(Stage.blocked);
@@ -597,6 +647,13 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     unawaited(translateIncoming(roomId));
   }
+
+  // ---------------- 이모지
+  Future<EmojiCatalog> emojiList() async => EmojiCatalog.fromJson(await call('emoji:list'));
+  Future<EmojiCatalog> setEmoji(String emoji) async => EmojiCatalog.fromJson(await call('emoji:set', {'emoji': emoji}));
+  Future<EmojiCatalog> buyEmoji(String id) async => EmojiCatalog.fromJson(await call('emoji:buy', {'id': id}));
+  Future<EmojiCatalog> requestEmoji(String emoji, String note) async =>
+      EmojiCatalog.fromJson(await call('emoji:request', {'emoji': emoji, 'note': note}));
 
   Future<void> setRoomLang(String roomId, String lang) async {
     final m = await call('room:lang', {'roomId': roomId, 'lang': lang});

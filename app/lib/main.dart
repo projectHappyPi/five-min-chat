@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 
+import 'kakao_auth.dart';
 import 'screens/auth_screens.dart';
 import 'screens/chat_screen.dart';
 import 'screens/ext_sheet.dart';
@@ -26,6 +27,7 @@ void openChat(String roomId) {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initKakao();
   final state = AppState();
   await state.init();
   runApp(FiveMinChat(state: state));

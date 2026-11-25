@@ -1,7 +1,7 @@
 name: five_min_chat
 description: 지나가다 만난 사람과 QR로 바로 연결해 5분 동안 텍스트로 대화하는 앱 (테스트 버전)
 publish_to: 'none'
-version: 0.3.0+3
+version: 0.4.0+4
 
 environment:
   sdk: '>=3.12.0 <4.0.0'
@@ -17,6 +17,7 @@ dependencies:
   app_links: ^6.3.2
   flutter_secure_storage: ^9.2.4
   google_mlkit_translation: ^1.0.3
+  kakao_flutter_sdk_user: ^2.0.1
 
 dev_dependencies:
   flutter_test:

@@ -107,7 +107,7 @@ class _LangPacksScreenState extends State<LangPacksScreen> {
                       true => l.code == 'en'
                           ? Text('기본', style: TextStyle(color: p.muted))
                           : TextButton(onPressed: () => _delete(l), child: Text('지우기', style: TextStyle(color: p.muted))),
-                      false => FilledButton.tonal(onPressed: () => _download(l), child: const Text('받기')),
+                      false => FilledButton.tonal(style: compactButton, onPressed: () => _download(l), child: const Text('받기')),
                     },
               leading: Icon(_t.isDownloadedCached(l.code) == true ? Icons.check_circle : Icons.download_outlined,
                   color: _t.isDownloadedCached(l.code) == true ? p.accent : p.muted),
@@ -121,7 +121,7 @@ class _LangPacksScreenState extends State<LangPacksScreen> {
             const Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Icon(Icons.arrow_forward, size: 18)),
             _langDrop(_to, (v) => setState(() => _to = v)),
             const Spacer(),
-            FilledButton(onPressed: _try, child: const Text('번역')),
+            FilledButton(style: compactButton, onPressed: _try, child: const Text('번역')),
           ]),
           if (_out != null) ...[
             const SizedBox(height: 8),

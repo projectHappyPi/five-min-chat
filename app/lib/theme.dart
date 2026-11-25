@@ -117,3 +117,6 @@ ThemeData buildTheme(Brightness b) {
     snackBarTheme: SnackBarThemeData(behavior: SnackBarBehavior.floating, backgroundColor: p.text, contentTextStyle: TextStyle(color: p.bg)),
   );
 }
+
+/// 테마의 채운 버튼은 가로 전체를 채운다. 줄 안이나 대화상자에 넣는 작은 버튼은 이 모양을 쓴다
+final ButtonStyle compactButton = FilledButton.styleFrom(minimumSize: const Size(72, 44), padding: const EdgeInsets.symmetric(horizontal: 16));

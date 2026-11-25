@@ -7,6 +7,7 @@ import '../main.dart';
 import '../state.dart';
 import '../theme.dart';
 import 'scanner_view.dart';
+import 'emoji_sheet.dart';
 import 'lang_packs.dart';
 
 /// 하단 탭: 내 QR(홈) / 스캔 / 대화
@@ -147,12 +148,14 @@ class _QrTabState extends State<QrTab> {
                 tooltip: '더보기',
                 onSelected: (v) {
                   if (v == 'reroll') _reroll();
+                  if (v == 'emoji') showEmojiSheet(context);
                   if (v == 'server') state.resetServer();
                   if (v == 'translate') {
                     Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const LangPacksScreen()));
                   }
                 },
                 itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'emoji', child: Text('내 이모지')),
                   PopupMenuItem(value: 'translate', child: Text('번역 언어 팩')),
                   PopupMenuItem(value: 'reroll', child: Text('닉네임 다시 뽑기')),
                   PopupMenuItem(value: 'server', child: Text('서버 주소 바꾸기')),
@@ -163,9 +166,23 @@ class _QrTabState extends State<QrTab> {
         ),
         Expanded(
           child: Center(
-            child: Column(
+            child: SingleChildScrollView(
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // 내 이모지: 상대가 QR을 찍을 때 누구 QR인지 알아보기 쉽게. 누르면 바꾸기
+                Semantics(
+                  button: true,
+                  label: '내 이모지 바꾸기',
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(40),
+                    onTap: () => showEmojiSheet(context),
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: Text(state.me?.emoji ?? '🙂', style: const TextStyle(fontSize: 56, height: 1.1)),
+                    ),
+                  ),
+                ),
                 Container(
                   padding: const EdgeInsets.all(18),
                   decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
@@ -205,6 +222,7 @@ class _QrTabState extends State<QrTab> {
                 ),
                 if (!state.connected) Text('서버 연결이 끊겼어요. 다시 연결하는 중…', style: TextStyle(color: p.danger, fontSize: 13)),
               ],
+            ),
             ),
           ),
         ),
@@ -387,7 +405,9 @@ class _RoomTile extends StatelessWidget {
       leading: CircleAvatar(
         backgroundColor: room.isLive ? p.accentSoft : p.surface,
         foregroundColor: room.isLive ? p.accent : p.muted,
-        child: Text(room.partnerNickname.characters.first, style: const TextStyle(fontWeight: FontWeight.w700)),
+        child: room.partnerEmoji != null
+            ? Text(room.partnerEmoji!, style: const TextStyle(fontSize: 22))
+            : Text(room.partnerNickname.characters.first, style: const TextStyle(fontWeight: FontWeight.w700)),
       ),
       title: Text(room.partnerNickname, style: TextStyle(fontWeight: FontWeight.w600, color: p.text)),
       subtitle: Text(_preview, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: p.muted)),

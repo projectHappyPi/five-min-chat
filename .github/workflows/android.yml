@@ -33,19 +33,19 @@ jobs:
       - name: Generate Android project files
         run: flutter create --platforms=android --org com.happypi --project-name five_min_chat .
 
-      # 실제 폰(ARM)용만 넣는다. PC 에뮬레이터용(x86_64) 라이브러리를 빼서 용량을 줄인다
-      - name: Keep only ARM libraries
+      # 서명 키·카카오 키·ARM 전용 설정 (app/android/build-extra.gradle.kts.txt)
+      - name: Configure Android build
         run: |
-          f=android/app/build.gradle.kts
-          printf '\nandroid {\n    packaging {\n        jniLibs {\n            excludes += setOf("lib/x86_64/**", "lib/x86/**")\n        }\n    }\n}\n' >> "$f"
-          tail -8 "$f"
+          key=$(tr -d '[:space:]' < ../config/kakao_native_app_key.txt)
+          sed "s/__KAKAO_KEY__/${key:-none}/" android/build-extra.gradle.kts.txt >> android/app/build.gradle.kts
+          tail -5 android/app/build.gradle.kts
 
       - run: flutter pub get
       - run: flutter analyze --no-fatal-infos --no-fatal-warnings
       - run: flutter test
 
       - name: Build APK (서버 주소는 config/server_url.txt)
-        run: flutter build apk --release --target-platform android-arm,android-arm64 --dart-define=SERVER_URL=$(cat ../config/server_url.txt | tr -d '[:space:]')
+        run: flutter build apk --release --target-platform android-arm,android-arm64 --dart-define=SERVER_URL=$(cat ../config/server_url.txt | tr -d '[:space:]') --dart-define=KAKAO_NATIVE_APP_KEY=$(cat ../config/kakao_native_app_key.txt | tr -d '[:space:]')
 
       - uses: actions/upload-artifact@v4
         with:

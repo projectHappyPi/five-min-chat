@@ -1,0 +1,29 @@
+
+// ---- CI 에서 flutter create 가 만든 android/app/build.gradle.kts 끝에 이어 붙인다 ----
+android {
+    // 카카오 로그인 복귀 주소 kakao{키}://oauth 의 키 (config/kakao_native_app_key.txt, 비면 none)
+    defaultConfig {
+        manifestPlaceholders["kakaoNativeKey"] = "__KAKAO_KEY__"
+    }
+    // 테스트용 고정 서명 키. 빌드마다 서명이 같아서 지우지 않고 업데이트 설치되고,
+    // 카카오 디벨로퍼스에 키 해시를 한 번만 등록하면 된다. (스토어 출시용 키는 따로 만들어 비밀로 보관)
+    signingConfigs {
+        create("test") {
+            storeFile = file("../keystore/test-release.jks")
+            storePassword = "fivechat-test"
+            keyAlias = "fivechat"
+            keyPassword = "fivechat-test"
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("test")
+        }
+    }
+    // 실제 폰(ARM)용만 넣는다. PC 에뮬레이터용(x86) 라이브러리를 빼서 용량을 줄인다
+    packaging {
+        jniLibs {
+            excludes += setOf("lib/x86_64/**", "lib/x86/**")
+        }
+    }
+}
